@@ -1,3 +1,4 @@
+import io
 import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
@@ -69,7 +70,7 @@ if uploaded_file is not None:
         'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
     )
 
-  # 3. 画面上のプレビュー一覧表示（SVG形式で高精度に描画）
+  # 3. 画面上のプレビュー一覧表示（SVG形式）
   st.markdown('---')
   st.subheader('👀 バーコード一覧プレビュー')
 
@@ -77,8 +78,6 @@ if uploaded_file is not None:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         code39 = barcode.get_barcode_class('code39')
-        
-        # SVGWriter を使用することで、ブラウザの標準フォント（点のない綺麗な0）で描画させる
         barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
         options = {
@@ -94,13 +93,20 @@ if uploaded_file is not None:
         spaced_text = ' '.join(list(clean_data))
         barcode_instance.default_text = f'* {spaced_text} *'
 
-        # SVGデータとしてメモリ上に書き出す
-        svg_io = barcode_instance.render(options=options)
+        # SVGWriterで正しくメモリ書き出しを行う修正
+        svg_io = io.BytesIO()
+        barcode_instance.write(svg_io, options=options)
+        svg_io.seek(0)
         svg_str = svg_io.getvalue().decode('utf-8')
 
-        # StreamlitでSVGを綺麗に画面表示するためのハック
+        # StreamlitでSVGを表示するための安全な埋め込み
         st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
-        st.image(svg_str.encode('utf-8'), use_container_width=True)
+        
+        # dataURI形式に変換して画像として表示
+        import base64
+        b64 = base64.b64encode(svg_io.getvalue()).decode('utf-8')
+        svg_data_url = f'data:image/svg+xml;base64,{b64}'
+        st.image(svg_data_url, use_container_width=True)
 
       except Exception as e:
         st.error(f'プレビュー生成エラー ({clean_data}): {e}')
