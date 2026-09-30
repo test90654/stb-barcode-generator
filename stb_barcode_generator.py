@@ -75,10 +75,6 @@ if uploaded_file is not None:
   st.markdown('---')
   st.subheader('👀 バーコード一覧プレビュー')
 
-  # 同じフォルダ内にある arial.ttf のパスを特定
-  current_dir = os.path.dirname(os.path.abspath(__file__))
-  font_path = os.path.join(current_dir, 'arial.ttf')
-
   if cleaned_data_list:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
@@ -94,9 +90,16 @@ if uploaded_file is not None:
             'write_text': True,
         }
 
-        # 同梱したフォントファイルを指定
-        if os.path.exists(font_path):
-            options['font_path'] = font_path
+        # 0に点が入らない、普通の丸いフォント（Windowsのメイリオや游ゴシック、または同梱フォント）を優先探索
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        custom_font = os.path.join(current_dir, 'arial.ttf')
+
+        if os.path.exists(custom_font):
+            options['font_path'] = custom_font
+        elif os.path.exists('C:/Windows/Fonts/meiryo.ttc'):  # メイリオ（0に点がつかない）
+            options['font_path'] = 'C:/Windows/Fonts/meiryo.ttc'
+        elif os.path.exists('C:/Windows/Fonts/YuGothM.ttc'):  # 游ゴシック
+            options['font_path'] = 'C:/Windows/Fonts/YuGothM.ttc'
 
         # 両端に * と、文字間にスペースを入れたフォーマット
         spaced_text = ' '.join(list(clean_data))
