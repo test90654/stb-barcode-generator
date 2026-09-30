@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（最適バランス版）')
+st.title('📦 STBバーコード生成・プレビューツール（太字対応・最適バランス版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、バーコードと文字の視認性が最適化された綺麗なバーコードをプレビュー・ZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、太字で視認性の高い綺麗なバーコードをプレビュー・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -83,18 +83,20 @@ if uploaded_file is not None:
     )
 
 
-  # フォントを確実にロードするヘルパー関数
+  # 【改良】太字フォント（メイリオ ボールド等）を優先的にロードするヘルパー関数
   def get_proper_font(size):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     custom_font = os.path.join(current_dir, 'arial.ttf')
 
     font_paths = [
         custom_font,
-        'C:/Windows/Fonts/meiryo.ttc',
-        'C:/Windows/Fonts/YuGothM.ttc',
-        'C:/Windows/Fonts/arial.ttf',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/Library/Fonts/Arial.ttf'
+        'C:/Windows/Fonts/meiryob.ttc',      # メイリオ ボールド（太字）
+        'C:/Windows/Fonts/YuGothB.ttc',     # 游ゴシック ボールド（太字）
+        'C:/Windows/Fonts/arialbd.ttf',     # Arial ボールド
+        'C:/Windows/Fonts/meiryo.ttc',      # 通常メイリオ（フォールバック）
+        'C:/Windows/Fonts/YuGothM.ttc',     # 通常游ゴシック
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', # Linux/Cloud用ボールド
+        '/Library/Fonts/Arial Bold.ttf'     # Mac用ボールド
     ]
 
     for path in font_paths:
@@ -106,7 +108,7 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # バーコード画像生成関数（関数名を `generate_clean_barcode_image` に統一）
+  # バーコード画像生成関数
   def generate_clean_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
@@ -127,7 +129,7 @@ if uploaded_file is not None:
 
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # フォントの取得
+    # 太字フォントの取得
     font = get_proper_font(font_size)
 
     # テキスト幅の計測
@@ -148,7 +150,7 @@ if uploaded_file is not None:
     else:
       spacing = 0
 
-    # バーコードにめり込まないよう、適切なパディングを確保
+    # バーコードに絶対にめり込まない安全なパディング計算
     padding_bottom = int(font_size * 1.2 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
