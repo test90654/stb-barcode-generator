@@ -78,9 +78,9 @@ if uploaded_file is not None:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         code39 = barcode.get_barcode_class('code39')
-        # 余計な文字が追加されないよう add_checksum=False を指定
         barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
+        # 【重要】font_path に 'arial.ttf' を指定して、0のドット（点）を解消する
         options = {
             'module_width': module_width,
             'module_height': module_height,
@@ -88,6 +88,7 @@ if uploaded_file is not None:
             'text_distance': text_distance,
             'quiet_zone': 6.5,
             'write_text': True,
+            'font_path': 'arial.ttf',
         }
 
         # 両端に * と、文字間にスペースを入れたフォーマット
