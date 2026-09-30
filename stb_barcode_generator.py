@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（完全カスタム描画版）')
+st.title('📦 STBバーコード生成・プレビューツール（フォント確実適用版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字の大きさやバーの太さを自由自在に調整して確認・ZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、文字サイズを自由に変更して綺麗なバーコードを作成できます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -46,7 +46,7 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目（文字サイズを大きく調整できるようにスライダーを刷新）
+  # 2. バーコードの設定項目
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
@@ -62,7 +62,7 @@ if uploaded_file is not None:
         '文字の大きさ (font_size)',
         min_value=12,
         max_value=60,
-        value=28,  # しっかり見えるデフォルト値
+        value=28,
         step=2,
     )
 
@@ -79,9 +79,33 @@ if uploaded_file is not None:
     )
 
 
-  # 完全自前制御のバーコード画像生成関数
+  # フォントを確実にロードするヘルパー関数
+  def get_proper_font(size):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    custom_font = os.path.join(current_dir, 'arial.ttf')
+
+    font_paths = [
+        custom_font,
+        'C:/Windows/Fonts/meiryo.ttc',
+        'C:/Windows/Fonts/YuGothM.ttc',
+        'C:/Windows/Fonts/arial.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux/Cloud用
+        '/Library/Fonts/Arial.ttf'  # Mac用
+    ]
+
+    for path in font_paths:
+      if os.path.exists(path):
+        try:
+          return ImageFont.truetype(path, size=size)
+        except Exception:
+          continue
+    
+    # 万が一どのTrueTypeフォントも見つからない場合のエラー防止
+    return ImageFont.load_default()
+
+
+  # バーコード画像生成関数
   def generate_perfect_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
-    # 1. バーコード本体（テキストなし）を生成
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
@@ -96,31 +120,14 @@ if uploaded_file is not None:
     barcode_instance.write(rv, options=options)
     rv.seek(0)
 
-    # バーコード画像をPillowで読み込み
     barcode_img = Image.open(rv).convert('RGB')
     bc_width, bc_height = barcode_img.size
 
-    # 2. 表示用テキスト（両端に*、文字間にスペース）
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # 3. 綺麗なフォントの読み込み
-    font = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    custom_font = os.path.join(current_dir, 'arial.ttf')
+    # 確実にサイズ変更が効くフォントを取得
+    font = get_proper_font(font_size)
 
-    try:
-        if os.path.exists(custom_font):
-            font = ImageFont.truetype(custom_font, size=font_size)
-        elif os.path.exists('C:/Windows/Fonts/meiryo.ttc'):
-            font = ImageFont.truetype('C:/Windows/Fonts/meiryo.ttc', size=font_size)
-        elif os.path.exists('C:/Windows/Fonts/YuGothM.ttc'):
-            font = ImageFont.truetype('C:/Windows/Fonts/YuGothM.ttc', size=font_size)
-        else:
-            font = ImageFont.load_default()
-    except Exception:
-        font = ImageFont.load_default()
-
-    # 4. 文字を綺麗に配置するための幅計算
     dummy_draw = ImageDraw.Draw(barcode_img)
     char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
     sum_widths = sum(char_widths)
@@ -130,24 +137,21 @@ if uploaded_file is not None:
     available_width = bc_width - (left_margin + right_margin)
 
     if len(display_text) > 1:
-        # バーコードの横幅いっぱいに等間隔で文字を配置するためのスペース計算
-        spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
+      spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
     else:
-        spacing = 0
+      spacing = 0
 
-    # 5. バーコードの下部にテキスト用の十分な余白（パディング）を持つ新しいキャンバスを作成
     padding_bottom = int(font_size * 1.5 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
-    # 6. テキストの描画
     draw = ImageDraw.Draw(final_img)
     text_y = bc_height + text_distance
 
     current_x = left_margin
     for idx, char in enumerate(display_text):
-        draw.text((current_x, text_y), char, fill='black', font=font)
-        current_x += char_widths[idx] + spacing
+      draw.text((current_x, text_y), char, fill='black', font=font)
+      current_x += char_widths[idx] + spacing
 
     out_rv = io.BytesIO()
     final_img.save(out_rv, format='PNG')
