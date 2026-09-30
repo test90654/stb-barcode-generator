@@ -1,9 +1,8 @@
 from datetime import datetime
 import io
 import zipfile
-import base64
 import barcode
-from barcode.writer import SVGWriter
+from barcode.writer import ImageWriter
 import pandas as pd
 import streamlit as st
 
@@ -11,9 +10,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（SVG版）')
+st.title('📦 STBバーコード生成・プレビューツール（PNG版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、綺麗なSVG形式での画面プレビュー確認と、ZIPでの一括ダウンロードが行えます。'
+    'CSVファイル（A列）をアップロードすると、画面上でPNG形式のプレビュー確認と、ZIPでの一括ダウンロードが行えます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -58,7 +57,7 @@ if uploaded_file is not None:
         step=1.0,
     )
     font_size = st.slider(
-        '文字の大きさ (font_size)', min_value=6, max_value=24, value=12, step=1
+        '文字の大きさ (font_size)', min_value=6, max_value=24, value=10, step=1
     )
 
   with col2:
@@ -66,11 +65,11 @@ if uploaded_file is not None:
         '文字とバーの距離 (text_distance)',
         min_value=1.0,
         max_value=20.0,
-        value=6.0,
+        value=5.0,
         step=1.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
+        'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
     )
 
   # 共通のバーコード生成オプション
@@ -86,7 +85,7 @@ if uploaded_file is not None:
   # 3. 一括ZIPダウンロードボタン
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 すべてのバーコード画像をSVG形式でZIP一括ダウンロード'):
+    if st.button('📦 すべてのバーコード画像をPNG形式でZIP一括ダウンロード'):
       zip_buffer = io.BytesIO()
       success_count = 0
 
@@ -94,56 +93,56 @@ if uploaded_file is not None:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
             code39 = barcode.get_barcode_class('code39')
-            # add_checksum=False でKやQの勝手な追加を防ぐ
-            barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
+            # add_checksum=False で余計な文字の追加を防止
+            barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
             spaced_text = ' '.join(list(clean_data))
             barcode_instance.default_text = f'* {spaced_text} *'
 
-            svg_io = io.BytesIO()
-            barcode_instance.write(svg_io, options=options)
+            rv = io.BytesIO()
+            barcode_instance.write(rv, options=options)
             
             # 3桁連番付きファイル名でZIPに格納（CSVの並び順を完全維持）
-            filename = f'{i:03d}_stb_barcode_{clean_data}.svg'
-            zip_file.writestr(filename, svg_io.getvalue())
+            filename = f'{i:03d}_stb_barcode_{clean_data}.png'
+            zip_file.writestr(filename, rv.getvalue())
             success_count += 1
           except Exception:
             pass
 
       if success_count > 0:
         current_date_str = datetime.now().strftime('%Y-%m-%d')
-        download_filename = f'stb_barcodes_svg_{current_date_str}.zip'
+        download_filename = f'stb_barcodes_png_{current_date_str}.zip'
 
-        st.success(f'✨ {success_count}件のSVGバーコードのZIP作成が完了しました！')
+        st.success(f'✨ {success_count}件のPNGバーコードのZIP作成が完了しました！')
         zip_buffer.seek(0)
         st.download_button(
-            label='📥 SVGバーコードZIPをダウンロード',
+            label='📥 PNGバーコードZIPをダウンロード',
             data=zip_buffer,
             file_name=download_filename,
             mime='application/zip',
         )
 
-    # 4. 画面上のプレビュー一覧表示
+    # 4. 画面上のプレビュー一覧表示（PNG形式）
     st.markdown('---')
     st.subheader('👀 バーコード一覧プレビュー')
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         code39 = barcode.get_barcode_class('code39')
-        barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
+        barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
         spaced_text = ' '.join(list(clean_data))
         barcode_instance.default_text = f'* {spaced_text} *'
 
-        svg_io = io.BytesIO()
-        barcode_instance.write(svg_io, options=options)
-        svg_io.seek(0)
+        rv = io.BytesIO()
+        barcode_instance.write(rv, options=options)
+        rv.seek(0)
 
-        st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
-        
-        b64 = base64.b64encode(svg_io.getvalue()).decode('utf-8')
-        svg_data_url = f'data:image/svg+xml;base64,{b64}'
-        st.image(svg_data_url, use_container_width=True)
+        st.image(
+            rv,
+            caption=f'[{i:03d}] Code: *{spaced_text}*',
+            use_container_width=True,
+        )
 
       except Exception as e:
         st.error(f'プレビュー生成エラー ({clean_data}): {e}')
