@@ -12,7 +12,7 @@ st.set_page_config(
 
 st.title('📦 STBバーコード一括生成・テストツール')
 st.write(
-    'CSVファイル（A列に管理番号等が入ったファイル）をアップロードするだけで、CSVの順番通りにバーコードを生成できます。'
+    'CSVファイル（A列に管理番号等が入ったファイル）をアップロードするだけで、元のデータ通りの正確なバーコードを生成できます。'
 )
 
 # 1. CSVファイルのアップロード（自動的に先頭列をターゲットにします）
@@ -24,7 +24,7 @@ if uploaded_file is not None:
   df = pd.read_csv(uploaded_file)
   target_column = df.columns[0]
 
-  # データの抽出と指数表記（1.96222E+11など）の自動修復（CSVの順番をそのまま維持）
+  # データの抽出と指数表記（1.96222E+11など）の自動修復
   cleaned_data_list = []
   for raw_data in df[target_column]:
     try:
@@ -79,7 +79,8 @@ if uploaded_file is not None:
 
     try:
       code39 = barcode.get_barcode_class('code39')
-      barcode_instance = code39(sample_data, writer=ImageWriter())
+      # 【重要】add_checksum=False を指定して、勝手にKやQなどの文字が追加されるのを防ぐ
+      barcode_instance = code39(sample_data, writer=ImageWriter(), add_checksum=False)
 
       options = {
           'module_width': module_width,
@@ -103,20 +104,20 @@ if uploaded_file is not None:
     except Exception as e:
       st.error(f'プレビュー生成エラー: {e}')
 
-    # 4. 一括生成・ZIPダウンロードボタン（ファイル名に連番を付与して順番を完全固定）
+    # 4. 一括生成・ZIPダウンロードボタン
     st.markdown('---')
     if st.button('📦 すべてのバーコード画像をZIPで一括生成する'):
       zip_buffer = io.BytesIO()
-      success_count = 0
+      success_count = c = 0
 
       with zipfile.ZipFile(
           zip_buffer, 'w', zipfile.ZIP_DEFLATED
       ) as zip_file:
-        # enumerate を使って何番目のデータか（インデックス）を取得し、ファイル名に反映する
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
             code39 = barcode.get_barcode_class('code39')
-            barcode_instance = code39(clean_data, writer=ImageWriter())
+            # こちらでも同様に add_checksum=False を適用
+            barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
             options = {
                 'module_width': module_width,
@@ -133,7 +134,6 @@ if uploaded_file is not None:
             rv = io.BytesIO()
             barcode_instance.write(rv, options=options)
 
-            # ファイル名に 3桁のゼロ埋め連番（例: 001_, 002_）を付与してCSVの並び順を完全維持
             filename = f'{i:03d}_stb_barcode_{clean_data}.png'
             zip_file.writestr(filename, rv.getvalue())
             success_count += 1
