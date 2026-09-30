@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（比率自動調整版）')
+st.title('📦 STBバーコード生成・プレビューツール（標準バランス版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字サイズやバランスの崩れない綺麗なバーコードを生成できます。'
+    'CSVファイル（A列）をアップロードすると、バランスの整った綺麗なバーコードをプレビューおよびZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -46,37 +46,36 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目
+  # 2. バーコードの設定項目（「バーコードどころ」と同じ自然な初期値に設定）
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
   with col1:
     module_height = st.slider(
         'バーの高さ (module_height)',
-        min_value=15.0,
-        max_value=80.0,
-        value=40.0,
-        step=5.0,
+        min_value=5.0,
+        max_value=30.0,
+        value=12.0,  # 縦長にならない自然な高さに修正
+        step=1.0,
     )
-    # 倍率として指定できるように変更
-    font_scale = st.slider(
-        '文字の大きさバランス (font_scale)',
-        min_value=1.0,
-        max_value=3.0,
-        value=1.8,
-        step=0.1,
+    font_size_input = st.slider(
+        '文字の大きさ (font_size)',
+        min_value=8,
+        max_value=30,
+        value=14,  # バーコードにジャストフィットするサイズ
+        step=1,
     )
 
   with col2:
     text_distance = st.slider(
         '文字とバーの距離',
-        min_value=2.0,
-        max_value=30.0,
-        value=10.0,
-        step=2.0,
+        min_value=1.0,
+        max_value=15.0,
+        value=5.0,  # 適切な隙間に修正
+        step=1.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
+        'バーの太さ (module_width)', min_value=0.1, max_value=0.6, value=0.25, step=0.05  # シャープで細めの実用的な太さに修正
     )
 
 
@@ -103,15 +102,15 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # バーコード画像生成関数（比率計算の修正版）
-  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_scale, text_distance):
+  # バーコード画像生成関数（実用的な標準バランス版）
+  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
     options = {
         'module_width': module_width,
         'module_height': module_height,
-        'quiet_zone': 10.0,
+        'quiet_zone': 6.5,
         'write_text': False,
     }
 
@@ -124,17 +123,11 @@ if uploaded_file is not None:
 
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # 【重要】画像の横幅（bc_width）を基準にしてフォントサイズを自動比例計算する
-    # これにより、画像解像度に関わらず常にジャストな大きさで文字が表示されます
-    base_size = bc_width / len(display_text) * 0.9
-    calculated_font_size = int(base_size * (font_scale / 1.5))
-
-    font = get_proper_font(calculated_font_size)
+    # フォントの取得
+    font = get_proper_font(font_size)
 
     # テキスト幅の計測
     dummy_draw = ImageDraw.Draw(barcode_img)
-    
-    # Pillowのバージョンによるメソッド差異への配慮
     try:
       char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
     except AttributeError:
@@ -142,17 +135,17 @@ if uploaded_file is not None:
 
     sum_widths = sum(char_widths)
 
-    left_margin = int(bc_width * 0.05)
-    right_margin = int(bc_width * 0.05)
+    left_margin = int(bc_width * 0.04)
+    right_margin = int(bc_width * 0.04)
     available_width = bc_width - (left_margin + right_margin)
 
     if len(display_text) > 1:
-      spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
+      spacing = max(1, (available_width - sum_widths) / (len(display_text) - 1))
     else:
       spacing = 0
 
-    # 余白とテキスト描画スペースを確保した新規キャンバス
-    padding_bottom = int(calculated_font_size * 1.6 + text_distance)
+    # 余白とテキスト描画スペースを適正な比率で確保
+    padding_bottom = int(font_size * 1.4 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
@@ -181,7 +174,7 @@ if uploaded_file is not None:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
             img_rv = generate_perfect_barcode_image(
-                clean_data, module_width, module_height, font_scale, text_distance
+                clean_data, module_width, module_height, font_size_input, text_distance
             )
             filename = f'{i:03d}_stb_barcode_{clean_data}.png'
             zip_file.writestr(filename, img_rv.getvalue())
@@ -209,7 +202,7 @@ if uploaded_file is not None:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         img_rv = generate_perfect_barcode_image(
-            clean_data, module_width, module_height, font_scale, text_distance
+            clean_data, module_width, module_height, font_size_input, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
         st.image(
