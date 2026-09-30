@@ -58,12 +58,11 @@ if uploaded_file is not None:
         value=9.0,
         step=1.0,
     )
-    # 【追加】バーコード全体の大きさを縮小する倍率（1.0が原寸、小さくするなら0.5など）
     scale_factor = st.slider(
         '全体の大きさ・縮小倍率 (scale)',
         min_value=0.3,
         max_value=1.0,
-        value=0.7,  # 少しコンパクトにした初期値
+        value=0.7,
         step=0.05,
     )
 
@@ -128,13 +127,11 @@ if uploaded_file is not None:
 
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # 黄金比率に基づいた最適なフォントサイズ計算
     optimal_font_size = int(bc_width / (len(display_text) * 1.5))
     optimal_font_size = max(12, optimal_font_size)
 
     font = get_proper_font(optimal_font_size)
 
-    # テキスト幅の計測
     dummy_draw = ImageDraw.Draw(barcode_img)
     try:
       char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
@@ -152,7 +149,6 @@ if uploaded_file is not None:
     else:
       spacing = 0
 
-    # パディング確保とテキスト合成
     padding_bottom = int(optimal_font_size * 1.3 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
@@ -162,15 +158,14 @@ if uploaded_file is not None:
 
     current_x = left_margin
     for idx, char in enumerate(display_text):
-      for dx in [0, 1]:  # 疑似ボールド
+      for dx in [0, 1]:
         draw.text((current_x + dx, text_y), char, fill='black', font=font)
       current_x += char_widths[idx] + spacing
 
-    # 【重要】縦横比を完全に保ったまま、指定された倍率（scale_factor）で縮小する
+    # 縦横比を保ったまま指定倍率で縮小
     if scale_factor < 1.0:
       new_width = int(final_img.width * scale_factor)
       new_height = int(final_img.height * scale_factor)
-      # LANCZOSフィルターを使って、縮小しても文字やバーが潰れず綺麗に描画されるようにする
       final_img = final_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
     out_rv = io.BytesIO()
@@ -221,10 +216,16 @@ if uploaded_file is not None:
             clean_data, module_width, module_height, scale_factor, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
+        
+        # 【修正】プレビュー画像の表示幅を縮小倍率（scale_factor）に合わせてピクセル単位で明示的に指定
+        img_pil = Image.open(img_rv)
+        preview_display_width = int(img_pil.width * min(scale_factor, 1.0))
+
+        st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
         st.image(
-            img_rv,
-            caption=f'[{i:03d}] Code: *{spaced_text}*',
-            use_container_width=True,
+            img_pil,
+            width=preview_display_width,
         )
+
       except Exception as e:
         st.error(f'プレビュー生成エラー ({clean_data}): {e}')
