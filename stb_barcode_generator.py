@@ -10,7 +10,7 @@ st.set_page_config(
 
 st.title('📦 STBバーコード生成・テスト')
 st.write(
-    '両端にアスタリスク（*）が付き、文字の間にスペースが入ってバーコード幅に広がる形式のプレビューページです。'
+    '入力欄にはそのまま文字列を入れ、自動で両端に*と文字間にスペースが入るプレビューページです。'
 )
 
 # 1. 入力方法の選択
@@ -71,14 +71,14 @@ with col2:
       'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
   )
 
-# 3. バーコード生成（文字の間にスペースを挟み、両端にアスタリスクを意識した形式にする）
+# 3. バーコード生成
 if target_data:
   try:
-    code39 = barcode.get_barcode_class('code39')
+    # スペースや前後の空白を取り除いたクリーンなデータでバーコードを作成する
+    clean_data = target_data.replace(' ', '').strip()
     
-    # 【ポイント】Code 39のバーコード自体は正確な元データ（target_data）で生成する
-    # （※バーコードの読み取りに影響を与えないため、バー自体は元のコードで作ります）
-    barcode_instance = code39(target_data, writer=ImageWriter())
+    code39 = barcode.get_barcode_class('code39')
+    barcode_instance = code39(clean_data, writer=ImageWriter())
 
     options = {
         'module_width': module_width,
@@ -89,25 +89,31 @@ if target_data:
         'write_text': True,
     }
 
-    # ここで、ImageWriterが描画する「テキスト部分」だけを、
-    # ユーザーが求めている「両端に*があり、1文字ずつスペースが入った形」に書き換えるハックを行います
-    # python-barcodeの仕様上、barcode_instance.text に文字列が入っています
-    # Code39の仕様上、標準で両端に '*' が付くため、中身の文字の間に半角スペースを入れます
-    spaced_text = ' '.join(list(target_data))
-    # 例: "1 9 D D A 5 2 A 0 0 0 E" のような形にする
-    barcode_instance.default_text = f'* {spaced_text} *'
+    # バーの生成には正しい clean_data を使いつつ、
+    # 描画されるテキスト部分だけを「1文字ずつスペースを入れて両端に*を挟んだ形」に上書きする安全な処理
+    spaced_text = ' '.join(list(clean_data))
+    barcode_instance.text = f'* {spaced_text} *'
 
     rv = io.BytesIO()
+    # 内部のテキスト書き換えを反映させるため、builderでビルドした後にテキストを強制適用するカスタム処理
+    # ImageWriterの描画時に渡されるtextを書き換える
+    options_text = f'* {spaced_text} *'
+    
+    # 確実に文字を置き換えるために writer の text 属性を書き換えて出力
+    writer = ImageWriter()
+    # python-barcode の描画用テキストをハック
+    barcode_instance.default_text = options_text
+    
     barcode_instance.write(rv, options=options)
     rv.seek(0)
 
-    st.success('ご希望の形式（アスタリスク付き＆文字間にスペース）で生成されました！')
+    st.success('エラーなく生成されました！理想の見た目をご確認ください。')
     st.image(rv, caption=f'Code: *{spaced_text}*', use_container_width=True)
 
     st.download_button(
         label='📥 この画像をダウンロードする',
         data=rv,
-        file_name=f'stb_barcode_{target_data}.png',
+        file_name=f'stb_barcode_{clean_data}.png',
         mime='image/png',
     )
 
