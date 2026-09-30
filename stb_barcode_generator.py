@@ -66,7 +66,18 @@ if uploaded_file is not None:
           # バーコード画像をメモリ上に生成
           rv = io.BytesIO()
           barcode_instance = code39(data, writer=ImageWriter())
-          barcode_instance.write(rv)
+
+          # バーコードの高さやフォントのバランスを調整するオプション
+          options = {
+              'module_width': 0.2,  # バーの太さ
+              'module_height': 12.0,  # バーの高さ（数値を下げると低くなります）
+              'font_size': 14,  # 文字の大きさ
+              'text_distance': 3.0,  # バーと文字の隙間
+              'write_text': True,  # 文字を表示する
+          }
+
+          # オプションを適用して書き出し
+          barcode_instance.write(rv, options=options)
 
           # ZIPファイル内に追加
           zip_file.writestr(f'stb_barcode_{data}.png', rv.getvalue())
