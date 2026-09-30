@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（フォント確実適用版）')
+st.title('📦 STBバーコード生成・プレビューツール（比率自動調整版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字サイズを自由に変更して綺麗なバーコードを作成できます。'
+    'CSVファイル（A列）をアップロードすると、文字サイズやバランスの崩れない綺麗なバーコードを生成できます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -53,29 +53,30 @@ if uploaded_file is not None:
   with col1:
     module_height = st.slider(
         'バーの高さ (module_height)',
-        min_value=20.0,
-        max_value=120.0,
-        value=60.0,
+        min_value=15.0,
+        max_value=80.0,
+        value=40.0,
         step=5.0,
     )
-    font_size = st.slider(
-        '文字の大きさ (font_size)',
-        min_value=12,
-        max_value=60,
-        value=28,
-        step=2,
+    # 倍率として指定できるように変更
+    font_scale = st.slider(
+        '文字の大きさバランス (font_scale)',
+        min_value=1.0,
+        max_value=3.0,
+        value=1.8,
+        step=0.1,
     )
 
   with col2:
     text_distance = st.slider(
-        '文字とバーの距離 (text_distance)',
+        '文字とバーの距離',
         min_value=2.0,
-        max_value=40.0,
-        value=12.0,
+        max_value=30.0,
+        value=10.0,
         step=2.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)', min_value=0.2, max_value=1.5, value=0.5, step=0.1
+        'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
     )
 
 
@@ -89,23 +90,21 @@ if uploaded_file is not None:
         'C:/Windows/Fonts/meiryo.ttc',
         'C:/Windows/Fonts/YuGothM.ttc',
         'C:/Windows/Fonts/arial.ttf',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux/Cloud用
-        '/Library/Fonts/Arial.ttf'  # Mac用
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/Library/Fonts/Arial.ttf'
     ]
 
     for path in font_paths:
       if os.path.exists(path):
         try:
-          return ImageFont.truetype(path, size=size)
+          return ImageFont.truetype(path, size=int(size))
         except Exception:
           continue
-    
-    # 万が一どのTrueTypeフォントも見つからない場合のエラー防止
     return ImageFont.load_default()
 
 
-  # バーコード画像生成関数
-  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
+  # バーコード画像生成関数（比率計算の修正版）
+  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_scale, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
@@ -125,15 +124,26 @@ if uploaded_file is not None:
 
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # 確実にサイズ変更が効くフォントを取得
-    font = get_proper_font(font_size)
+    # 【重要】画像の横幅（bc_width）を基準にしてフォントサイズを自動比例計算する
+    # これにより、画像解像度に関わらず常にジャストな大きさで文字が表示されます
+    base_size = bc_width / len(display_text) * 0.9
+    calculated_font_size = int(base_size * (font_scale / 1.5))
 
+    font = get_proper_font(calculated_font_size)
+
+    # テキスト幅の計測
     dummy_draw = ImageDraw.Draw(barcode_img)
-    char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
+    
+    # Pillowのバージョンによるメソッド差異への配慮
+    try:
+      char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
+    except AttributeError:
+      char_widths = [font.getlength(char) for char in display_text]
+
     sum_widths = sum(char_widths)
 
-    left_margin = int(bc_width * 0.03)
-    right_margin = int(bc_width * 0.03)
+    left_margin = int(bc_width * 0.05)
+    right_margin = int(bc_width * 0.05)
     available_width = bc_width - (left_margin + right_margin)
 
     if len(display_text) > 1:
@@ -141,7 +151,8 @@ if uploaded_file is not None:
     else:
       spacing = 0
 
-    padding_bottom = int(font_size * 1.5 + text_distance)
+    # 余白とテキスト描画スペースを確保した新規キャンバス
+    padding_bottom = int(calculated_font_size * 1.6 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
@@ -170,7 +181,7 @@ if uploaded_file is not None:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
             img_rv = generate_perfect_barcode_image(
-                clean_data, module_width, module_height, font_size, text_distance
+                clean_data, module_width, module_height, font_scale, text_distance
             )
             filename = f'{i:03d}_stb_barcode_{clean_data}.png'
             zip_file.writestr(filename, img_rv.getvalue())
@@ -198,7 +209,7 @@ if uploaded_file is not None:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         img_rv = generate_perfect_barcode_image(
-            clean_data, module_width, module_height, font_size, text_distance
+            clean_data, module_width, module_height, font_scale, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
         st.image(
