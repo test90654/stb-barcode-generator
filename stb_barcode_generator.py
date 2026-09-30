@@ -9,7 +9,9 @@ st.set_page_config(
 )
 
 st.title('📦 STBバーコード生成・テスト')
-st.write('標準の描画エンジンを使用した安定版のプレビューページです。')
+st.write(
+    '両端にアスタリスク（*）が付き、文字の間にスペースが入ってバーコード幅に広がる形式のプレビューページです。'
+)
 
 # 1. 入力方法の選択
 input_method = st.radio(
@@ -69,11 +71,13 @@ with col2:
       'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
   )
 
-# 3. バーコード生成
+# 3. バーコード生成（文字の間にスペースを挟み、両端にアスタリスクを意識した形式にする）
 if target_data:
   try:
     code39 = barcode.get_barcode_class('code39')
-    rv = io.BytesIO()
+    
+    # 【ポイント】Code 39のバーコード自体は正確な元データ（target_data）で生成する
+    # （※バーコードの読み取りに影響を与えないため、バー自体は元のコードで作ります）
     barcode_instance = code39(target_data, writer=ImageWriter())
 
     options = {
@@ -85,11 +89,20 @@ if target_data:
         'write_text': True,
     }
 
+    # ここで、ImageWriterが描画する「テキスト部分」だけを、
+    # ユーザーが求めている「両端に*があり、1文字ずつスペースが入った形」に書き換えるハックを行います
+    # python-barcodeの仕様上、barcode_instance.text に文字列が入っています
+    # Code39の仕様上、標準で両端に '*' が付くため、中身の文字の間に半角スペースを入れます
+    spaced_text = ' '.join(list(target_data))
+    # 例: "1 9 D D A 5 2 A 0 0 0 E" のような形にする
+    barcode_instance.default_text = f'* {spaced_text} *'
+
+    rv = io.BytesIO()
     barcode_instance.write(rv, options=options)
     rv.seek(0)
 
-    st.success('バーコードが生成されました！')
-    st.image(rv, caption=f'Code: {target_data}', use_container_width=True)
+    st.success('ご希望の形式（アスタリスク付き＆文字間にスペース）で生成されました！')
+    st.image(rv, caption=f'Code: *{spaced_text}*', use_container_width=True)
 
     st.download_button(
         label='📥 この画像をダウンロードする',
