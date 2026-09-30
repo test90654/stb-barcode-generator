@@ -1,8 +1,5 @@
-import io
-import os
 import barcode
-from barcode.writer import ImageWriter
-from PIL import Image, ImageDraw, ImageFont
+from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
 
@@ -10,9 +7,9 @@ st.set_page_config(
     page_title='STBバーコードプレビューツール', page_icon='🔍', layout='centered'
 )
 
-st.title('🔍 STBバーコード・画面プレビューツール')
+st.title('🔍 STBバーコード・画面プレビューツール（SVG高精度表示）')
 st.write(
-    'CSVファイル（A列に管理番号等が入ったファイル）をアップロードすると、画面上で直接すべてのバーコードの見た目を確認できます。'
+    'CSVファイル（A列）をアップロードすると、文字崩れのない綺麗なSVGバーコードを画面上で確認できます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -65,14 +62,14 @@ if uploaded_file is not None:
         '文字とバーの距離 (text_distance)',
         min_value=1.0,
         max_value=20.0,
-        value=5.0,
+        value=6.0,
         step=1.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
+        'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
     )
 
-  # 3. 画面上のプレビュー一覧表示（完全自前描画で形と字間・0の形を正常化）
+  # 3. 画面上のプレビュー一覧表示（SVG形式で高精度に描画）
   st.markdown('---')
   st.subheader('👀 バーコード一覧プレビュー')
 
@@ -80,83 +77,30 @@ if uploaded_file is not None:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         code39 = barcode.get_barcode_class('code39')
-        # 【重要】ライブラリ側の文字描画は使わず、バーコードの図形だけを生成する
-        barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
+        
+        # SVGWriter を使用することで、ブラウザの標準フォント（点のない綺麗な0）で描画させる
+        barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
         options = {
             'module_width': module_width,
             'module_height': module_height,
+            'font_size': font_size,
+            'text_distance': text_distance,
             'quiet_zone': 6.5,
-            'write_text': False,  # 文字は自前で描画するためオフ
+            'write_text': True,
         }
 
-        rv = io.BytesIO()
-        barcode_instance.write(rv, options=options)
-        rv.seek(0)
+        # 両端に * と、文字間にスペースを入れたフォーマット
+        spaced_text = ' '.join(list(clean_data))
+        barcode_instance.default_text = f'* {spaced_text} *'
 
-        # Pillowで画像を読み込み
-        base_img = Image.open(rv).convert('RGB')
-        img_width, img_height = base_img.size
+        # SVGデータとしてメモリ上に書き出す
+        svg_io = barcode_instance.render(options=options)
+        svg_str = svg_io.getvalue().decode('utf-8')
 
-        # 両端にアスタリスク、文字の間にスペースを入れた文字列を定義
-        display_text = f"* {' '.join(list(clean_data))} *"
+        # StreamlitでSVGを綺麗に画面表示するためのハック
+        st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
+        st.image(svg_str.encode('utf-8'), use_container_width=True)
 
-        # フォントの読み込み（Windows標準の綺麗なゴシックやメイリオ、またはデフォルト）
-        font = None
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        custom_font = os.path.join(current_dir, 'arial.ttf')
-        
-        try:
-            if os.path.exists(custom_font):
-                font = ImageFont.truetype(custom_font, size=font_size * 2)
-            elif os.path.exists('C:/Windows/Fonts/meiryo.ttc'):
-                font = ImageFont.truetype('C:/Windows/Fonts/meiryo.ttc', size=font_size * 2)
-            elif os.path.exists('C:/Windows/Fonts/YuGothM.ttc'):
-                font = ImageFont.truetype('C:/Windows/Fonts/YuGothM.ttc', size=font_size * 2)
-            else:
-                font = ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
-
-        draw = ImageDraw.Draw(base_img)
-
-        # 各文字の幅を測定し、バーコードの横幅いっぱいに綺麗に等間隔で並べる
-        char_widths = [draw.textlength(char, font=font) for char in display_text]
-        total_chars = len(display_text)
-
-        left_margin = int(img_width * 0.08)
-        right_margin = int(img_width * 0.08)
-        available_width = img_width - (left_margin + right_margin)
-
-        sum_widths = sum(char_widths)
-        if total_chars > 1:
-            spacing = (available_width - sum_widths) / (total_chars - 1)
-        else:
-            spacing = 0
-
-        # 下部に文字用の余白（パディング）を拡張
-        padding_bottom = int(font_size * 2.5 + text_distance)
-        new_img = Image.new("RGB", (img_width, img_height + padding_bottom), "white")
-        new_img.paste(base_img, (0, 0))
-        
-        draw_new = ImageDraw.Draw(new_img)
-        text_y = img_height + text_distance
-
-        # 1文字ずつ等間隔で描画（変形やドットのない正常な「0」を維持）
-        current_x = left_margin
-        for idx, char in enumerate(display_text):
-            draw_new.text((current_x, text_y), char, fill="black", font=font)
-            current_x += char_widths[idx] + spacing
-
-        final_rv = io.BytesIO()
-        new_img.save(final_rv, format='PNG')
-        final_rv.seek(0)
-
-        # 画面に順番通りに画像を表示
-        st.image(
-            final_rv,
-            caption=f'[{i:03d}] Code: {display_text}',
-            use_container_width=True,
-        )
       except Exception as e:
         st.error(f'プレビュー生成エラー ({clean_data}): {e}')
