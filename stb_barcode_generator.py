@@ -7,14 +7,15 @@ import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
+import xml.etree.ElementTree as ET
 
 st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（SVGベクター安定版）')
+st.title('📦 STBバーコード生成・プレビューツール（文字間隔調整版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、崩れることなく綺麗に表示される高品質なSVGバーコードをプレビュー・ZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、文字間隔が最適化された綺麗なSVGバーコードをプレビュー・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -81,10 +82,19 @@ if uploaded_file is not None:
         value=0.4,
         step=0.05,
     )
+    
+    # 【追加】文字の間隔（トラッキング）をスライダーで自由に調整できるようにしました
+    letter_spacing = st.slider(
+        '文字の間隔 (letter_spacing)',
+        min_value=1.0,
+        max_value=10.0,
+        value=3.5,
+        step=0.5,
+    )
 
 
-  # 安定して綺麗なSVGを生成する関数
-  def generate_stable_svg_barcode(clean_data, module_width, module_height, font_size, text_distance):
+  # XMLパースを用いて安全に文字間隔を拡張するSVG生成関数
+  def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
@@ -97,14 +107,37 @@ if uploaded_file is not None:
         'write_text': True,
     }
 
-    # 各文字の間にスペースを入れたフォーマット
+    # 各文字の間に半角スペースを挟む
     spaced_text = ' '.join(list(clean_data))
     barcode_instance.default_text = f'* {spaced_text} *'
 
     svg_io = io.BytesIO()
     barcode_instance.write(svg_io, options=options)
-    svg_io.seek(0)
-    return svg_io.getvalue()
+    svg_content = svg_io.getvalue().decode('utf-8')
+
+    try:
+      # XMLのデフォルト名前空間（xmlns）のせいでElementTreeが要素を見失うのを防ぐための処理
+      ET.register_namespace('', 'http://www.w3.org/2000/svg')
+      
+      # 文字列をXMLとして安全にパース
+      root = ET.fromstring(svg_content)
+      
+      # SVG内のすべての <text> タグを検索して letter-spacing を付与
+      # （名前空間に対応するためワイルドカードを使用）
+      for elem in root.iter():
+        if elem.tag.endswith('text'):
+          existing_style = elem.get('style', '')
+          # 既存のスタイルに letter-spacing を追加
+          new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
+          elem.set('style', new_style)
+
+      # 再びきれいなXML文字列に変換
+      svg_content = ET.tostring(root, encoding='utf-8').decode('utf-8')
+    except Exception:
+      # 万が一パースに失敗した場合は元のSVGをそのまま返す
+      pass
+
+    return svg_content.encode('utf-8')
 
 
   # 3. 一括ZIPダウンロードボタン（SVG形式）
@@ -117,8 +150,8 @@ if uploaded_file is not None:
       with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
-            svg_bytes = generate_stable_svg_barcode(
-                clean_data, module_width, module_height, font_size, text_distance
+            svg_bytes = generate_spaced_svg_barcode(
+                clean_data, module_width, module_height, font_size, text_distance, letter_spacing
             )
             filename = f'{i:03d}_stb_barcode_{clean_data}.svg'
             zip_file.writestr(filename, svg_bytes)
@@ -145,8 +178,8 @@ if uploaded_file is not None:
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
-        svg_bytes = generate_stable_svg_barcode(
-            clean_data, module_width, module_height, font_size, text_distance
+        svg_bytes = generate_spaced_svg_barcode(
+            clean_data, module_width, module_height, font_size, text_distance, letter_spacing
         )
         spaced_text = ' '.join(list(clean_data))
 
