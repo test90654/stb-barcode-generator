@@ -13,13 +13,14 @@ st.write(
     'CSVファイル（A列に管理番号等が入ったファイル）をアップロードすると、画面上で直接すべてのバーコードの見た目を確認できます。'
 )
 
-# 1. CSVファイルのアップロード（自動的に先頭列をターゲットにします）
+# 1. CSVファイルのアップロード（header=None を指定して1行目からデータとして読み込む）
 uploaded_file = st.file_uploader(
     'STBリストのCSVファイルを選択してください', type=['csv']
 )
 
 if uploaded_file is not None:
-  df = pd.read_csv(uploaded_file)
+  # header=None を指定することで、1行目のデータ（19DDA52A000Eなど）がヘッダーとして消えるのを防ぐ
+  df = pd.read_csv(uploaded_file, header=None)
   target_column = df.columns[0]
 
   # データの抽出と指数表記（1.96222E+11など）の自動修復
@@ -80,7 +81,7 @@ if uploaded_file is not None:
         code39 = barcode.get_barcode_class('code39')
         barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
-        # 【重要】font_path に 'arial.ttf' を指定して、0のドット（点）を解消する
+        # font_path に 'arial.ttf' を指定して 0 のドットを解消
         options = {
             'module_width': module_width,
             'module_height': module_height,
