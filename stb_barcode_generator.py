@@ -46,7 +46,7 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目（ご指定の高さ9、太さ0.4を初期値に設定）
+  # 2. バーコードの設定項目
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
@@ -55,14 +55,14 @@ if uploaded_file is not None:
         'バーの高さ (module_height)',
         min_value=5.0,
         max_value=30.0,
-        value=9.0,  # ご指定の高さ
+        value=9.0,
         step=1.0,
     )
     font_size_input = st.slider(
         '文字の大きさ (font_size)',
         min_value=10,
         max_value=35,
-        value=18,  # 視認性を上げるために少し大きめに調整
+        value=18,
         step=1,
     )
 
@@ -71,14 +71,14 @@ if uploaded_file is not None:
         '文字とバーの距離',
         min_value=2.0,
         max_value=20.0,
-        value=6.0,  # めり込まない安全な隙間
+        value=6.0,
         step=1.0,
     )
     module_width = st.slider(
         'バーの太さ (module_width)',
         min_value=0.1,
         max_value=1.0,
-        value=0.4,  # ご指定の太さ
+        value=0.4,
         step=0.05,
     )
 
@@ -106,8 +106,8 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # バーコード画像生成関数
-  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
+  # バーコード画像生成関数（関数名を `generate_clean_barcode_image` に統一）
+  def generate_clean_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
@@ -148,13 +148,12 @@ if uploaded_file is not None:
     else:
       spacing = 0
 
-    # 【重要】バーコードに絶対にめり込まないよう、テキスト領域のパディングを文字サイズと距離から安全に計算
+    # バーコードにめり込まないよう、適切なパディングを確保
     padding_bottom = int(font_size * 1.2 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
     draw = ImageDraw.Draw(final_img)
-    # バーの下端（bc_height）から指定された距離（text_distance）を確実に空けて描画
     text_y = bc_height + text_distance
 
     current_x = left_margin
