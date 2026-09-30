@@ -7,15 +7,14 @@ import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
-import xml.etree.ElementTree as ET
 
 st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（文字間隔最適化版）')
+st.title('📦 STBバーコード生成・プレビューツール（SVGベクター安定版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字間隔がバーコードの幅に綺麗にフィットした高品質なSVGバーコードを生成できます。'
+    'CSVファイル（A列）をアップロードすると、崩れることなく綺麗に表示される高品質なSVGバーコードをプレビュー・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -84,8 +83,8 @@ if uploaded_file is not None:
     )
 
 
-  # SVGを生成し、文字間隔（letter-spacing）をバーコードの幅に合わせて最適化する関数
-  def generate_optimized_svg_barcode(clean_data, module_width, module_height, font_size, text_distance):
+  # 安定して綺麗なSVGを生成する関数
+  def generate_stable_svg_barcode(clean_data, module_width, module_height, font_size, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
@@ -104,28 +103,8 @@ if uploaded_file is not None:
 
     svg_io = io.BytesIO()
     barcode_instance.write(svg_io, options=options)
-    svg_data = svg_io.getvalue().decode('utf-8')
-
-    # SVGのXML要素を解析して、テキスト要素の文字間隔（letter-spacing）やスタイルを調整
-    try:
-      # XMLのネームスペースに対応するための処理
-      for line in svg_data.split('\n'):
-        if '<text' in line:
-          # すでに含まれているstyle属性にletter-spacingを追加・調整する
-          pass
-      
-      # Pythonの文字列置換により、python-barcodeが生成するテキストタグに文字間隔（letter-spacing）を強制注入
-      # これにより文字と文字の間隔がバーの幅全体にバランスよく広がります
-      if '<text ' in svg_data:
-        # letter-spacing や text-anchor を調整して綺麗にフィットさせる
-        svg_data = svg_data.replace(
-            '<text ', 
-            f'<text style="letter-spacing: 2px; font-weight: bold;" '
-        )
-    except Exception:
-      pass
-
-    return svg_data.encode('utf-8')
+    svg_io.seek(0)
+    return svg_io.getvalue()
 
 
   # 3. 一括ZIPダウンロードボタン（SVG形式）
@@ -138,7 +117,7 @@ if uploaded_file is not None:
       with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
-            svg_bytes = generate_optimized_svg_barcode(
+            svg_bytes = generate_stable_svg_barcode(
                 clean_data, module_width, module_height, font_size, text_distance
             )
             filename = f'{i:03d}_stb_barcode_{clean_data}.svg'
@@ -162,11 +141,11 @@ if uploaded_file is not None:
 
     # 4. 画面上のプレビュー一覧表示
     st.markdown('---')
-    st.subheader('👀 バーコード一覧プレビュー（文字間隔最適化）')
+    st.subheader('👀 バーコード一覧プレビュー')
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
-        svg_bytes = generate_optimized_svg_barcode(
+        svg_bytes = generate_stable_svg_barcode(
             clean_data, module_width, module_height, font_size, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
