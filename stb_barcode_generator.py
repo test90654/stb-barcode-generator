@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（高精度カスタム描画版）')
+st.title('📦 STBバーコード生成・プレビューツール（完全カスタム描画版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字崩れや0の変形がない綺麗なバーコードをプレビューおよびZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、文字の大きさやバーの太さを自由自在に調整して確認・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -46,99 +46,101 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目
+  # 2. バーコードの設定項目（文字サイズを大きく調整できるようにスライダーを刷新）
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
   with col1:
     module_height = st.slider(
         'バーの高さ (module_height)',
-        min_value=10.0,
-        max_value=50.0,
-        value=25.0,
-        step=1.0,
+        min_value=20.0,
+        max_value=120.0,
+        value=60.0,
+        step=5.0,
     )
     font_size = st.slider(
-        '文字の大きさ (font_size)', min_value=10, max_value=30, value=16, step=1
+        '文字の大きさ (font_size)',
+        min_value=12,
+        max_value=60,
+        value=28,  # しっかり見えるデフォルト値
+        step=2,
     )
 
   with col2:
     text_distance = st.slider(
         '文字とバーの距離 (text_distance)',
         min_value=2.0,
-        max_value=20.0,
-        value=8.0,
-        step=1.0,
+        max_value=40.0,
+        value=12.0,
+        step=2.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
+        'バーの太さ (module_width)', min_value=0.2, max_value=1.5, value=0.5, step=0.1
     )
 
 
-  # 綺麗なバーコード＆テキスト合成を行う関数（「バーコードどころ」方式）
-  def generate_clean_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
-    # 1. バーコード本体のみを生成（文字はライブラリに描かせない）
+  # 完全自前制御のバーコード画像生成関数
+  def generate_perfect_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
+    # 1. バーコード本体（テキストなし）を生成
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
     options = {
         'module_width': module_width,
         'module_height': module_height,
-        'quiet_zone': 6.5,
-        'write_text': False,  # ライブラリの文字機能はオフ
+        'quiet_zone': 10.0,
+        'write_text': False,
     }
 
     rv = io.BytesIO()
     barcode_instance.write(rv, options=options)
     rv.seek(0)
 
-    # 2. Pillowでバーコード画像を読み込む
+    # バーコード画像をPillowで読み込み
     barcode_img = Image.open(rv).convert('RGB')
     bc_width, bc_height = barcode_img.size
 
-    # 3. 表示用テキストの作成（両端に*、文字間にスペース）
+    # 2. 表示用テキスト（両端に*、文字間にスペース）
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    # 4. 綺麗なフォントの読み込み（メイリオや游ゴシック、または同梱フォントを優先）
+    # 3. 綺麗なフォントの読み込み
     font = None
     current_dir = os.path.dirname(os.path.abspath(__file__))
     custom_font = os.path.join(current_dir, 'arial.ttf')
 
     try:
         if os.path.exists(custom_font):
-            font = ImageFont.truetype(custom_font, size=font_size * 2)
+            font = ImageFont.truetype(custom_font, size=font_size)
         elif os.path.exists('C:/Windows/Fonts/meiryo.ttc'):
-            font = ImageFont.truetype('C:/Windows/Fonts/meiryo.ttc', size=font_size * 2)
+            font = ImageFont.truetype('C:/Windows/Fonts/meiryo.ttc', size=font_size)
         elif os.path.exists('C:/Windows/Fonts/YuGothM.ttc'):
-            font = ImageFont.truetype('C:/Windows/Fonts/YuGothM.ttc', size=font_size * 2)
+            font = ImageFont.truetype('C:/Windows/Fonts/YuGothM.ttc', size=font_size)
         else:
             font = ImageFont.load_default()
     except Exception:
         font = ImageFont.load_default()
 
-    # テキストの幅を計測して等間隔に配置するための準備
+    # 4. 文字を綺麗に配置するための幅計算
     dummy_draw = ImageDraw.Draw(barcode_img)
-    # textlengthメソッドで正確な文字幅を取得
     char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
     sum_widths = sum(char_widths)
 
-    # バーコードの幅に合わせて文字の間隔（スペース）を自動調整
-    left_margin = int(bc_width * 0.05)
-    right_margin = int(bc_width * 0.05)
+    left_margin = int(bc_width * 0.03)
+    right_margin = int(bc_width * 0.03)
     available_width = bc_width - (left_margin + right_margin)
 
     if len(display_text) > 1:
-        # 文字間の余白を均等配分
+        # バーコードの横幅いっぱいに等間隔で文字を配置するためのスペース計算
         spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
     else:
         spacing = 0
 
-    # 5. テキストを描画するためのキャンバスを下に拡張して新規作成
-    padding_bottom = int(font_size * 2.8 + text_distance)
+    # 5. バーコードの下部にテキスト用の十分な余白（パディング）を持つ新しいキャンバスを作成
+    padding_bottom = int(font_size * 1.5 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
-    # 6. Pillowで文字を綺麗に描画
+    # 6. テキストの描画
     draw = ImageDraw.Draw(final_img)
     text_y = bc_height + text_distance
 
@@ -147,9 +149,8 @@ if uploaded_file is not None:
         draw.text((current_x, text_y), char, fill='black', font=font)
         current_x += char_widths[idx] + spacing
 
-    # 最終的なPNGバイナリとして出力
     out_rv = io.BytesIO()
-    final_img.save(out_rv, format='PNG', dpi=(300, 300))
+    final_img.save(out_rv, format='PNG')
     out_rv.seek(0)
     return out_rv
 
@@ -164,10 +165,9 @@ if uploaded_file is not None:
       with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
-            img_rv = generate_clean_barcode_image(
+            img_rv = generate_perfect_barcode_image(
                 clean_data, module_width, module_height, font_size, text_distance
             )
-            # 3桁連番付きファイル名でZIPに格納（CSVの並び順を完全維持）
             filename = f'{i:03d}_stb_barcode_{clean_data}.png'
             zip_file.writestr(filename, img_rv.getvalue())
             success_count += 1
@@ -193,7 +193,7 @@ if uploaded_file is not None:
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
-        img_rv = generate_clean_barcode_image(
+        img_rv = generate_perfect_barcode_image(
             clean_data, module_width, module_height, font_size, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
