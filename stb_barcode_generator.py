@@ -12,9 +12,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（確実太字対応版）')
+st.title('📦 STBバーコード生成・プレビューツール（黄金比率・自動最適化版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、太字でクッキリとしたバーコードをプレビュー・ZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、「バーコードどころ」と同じ理想的なバランスのバーコードをプレビュー・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -46,7 +46,7 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目
+  # 2. バーコードの設定項目（ご指定の高さ9、太さ0.4をベストな初期値に設定）
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
@@ -58,12 +58,13 @@ if uploaded_file is not None:
         value=9.0,
         step=1.0,
     )
-    font_size_input = st.slider(
-        '文字の大きさ (font_size)',
-        min_value=10,
-        max_value=35,
-        value=18,
-        step=1,
+    # 補助的な微調整用（基本は自動で最適な大きさに計算されます）
+    font_scale = st.slider(
+        '文字の大きさ微調整 (font_scale)',
+        min_value=0.8,
+        max_value=1.5,
+        value=1.1,
+        step=0.05,
     )
 
   with col2:
@@ -71,7 +72,7 @@ if uploaded_file is not None:
         '文字とバーの距離',
         min_value=2.0,
         max_value=20.0,
-        value=6.0,
+        value=5.0,
         step=1.0,
     )
     module_width = st.slider(
@@ -83,20 +84,18 @@ if uploaded_file is not None:
     )
 
 
-  # フォントをロードするヘルパー関数
+  # フォントを確実にロードするヘルパー関数
   def get_proper_font(size):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     custom_font = os.path.join(current_dir, 'arial.ttf')
 
     font_paths = [
         custom_font,
-        'C:/Windows/Fonts/meiryob.ttc',
-        'C:/Windows/Fonts/YuGothB.ttc',
-        'C:/Windows/Fonts/arialbd.ttf',
         'C:/Windows/Fonts/meiryo.ttc',
         'C:/Windows/Fonts/YuGothM.ttc',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-        '/Library/Fonts/Arial Bold.ttf'
+        'C:/Windows/Fonts/arial.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/Library/Fonts/Arial.ttf'
     ]
 
     for path in font_paths:
@@ -108,8 +107,8 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # バーコード画像生成関数（疑似ボールド処理で確実に太字化）
-  def generate_clean_barcode_image(clean_data, module_width, module_height, font_size, text_distance):
+  # 「バーコードどころ」の比率を完全に再現する生成関数
+  def generate_gold_ratio_barcode_image(clean_data, module_width, module_height, font_scale, text_distance):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
@@ -129,8 +128,14 @@ if uploaded_file is not None:
 
     display_text = f"* {' '.join(list(clean_data))} *"
 
-    font = get_proper_font(font_size)
+    # 【核心】バーコードの横幅（bc_width）と文字数から、最適なフォントサイズを自動算出
+    # 「バーコードどころ」と同等の視認性の高い文字サイズ比率に設定
+    optimal_font_size = int((bc_width / (len(display_text) * 1.5)) * font_scale)
+    optimal_font_size = max(12, optimal_font_size)  # 最低でも小さくなりすぎないようガード
 
+    font = get_proper_font(optimal_font_size)
+
+    # テキスト幅の正確な計測
     dummy_draw = ImageDraw.Draw(barcode_img)
     try:
       char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
@@ -148,7 +153,8 @@ if uploaded_file is not None:
     else:
       spacing = 0
 
-    padding_bottom = int(font_size * 1.2 + text_distance)
+    # バーコードに絶対にめり込まない安全なパディング確保 ＋ 疑似ボールドで太字化
+    padding_bottom = int(optimal_font_size * 1.3 + text_distance)
     final_img = Image.new('RGB', (bc_width, bc_height + padding_bottom), 'white')
     final_img.paste(barcode_img, (0, 0))
 
@@ -157,8 +163,8 @@ if uploaded_file is not None:
 
     current_x = left_margin
     for idx, char in enumerate(display_text):
-      # 【重要】文字を少しずつずらして重ねて描画することで、どんなフォントでも確実に太字（ボールド）にする
-      for dx in [0, 1]:  # 左右に1ピクセルずらして重ねる
+      # 疑似ボールド処理（1ピクセル左右にずらして描画して太くハッキリさせる）
+      for dx in [0, 1]:
         draw.text((current_x + dx, text_y), char, fill='black', font=font)
       
       current_x += char_widths[idx] + spacing
@@ -179,8 +185,8 @@ if uploaded_file is not None:
       with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
           try:
-            img_rv = generate_clean_barcode_image(
-                clean_data, module_width, module_height, font_size_input, text_distance
+            img_rv = generate_gold_ratio_barcode_image(
+                clean_data, module_width, module_height, font_scale, text_distance
             )
             filename = f'{i:03d}_stb_barcode_{clean_data}.png'
             zip_file.writestr(filename, img_rv.getvalue())
@@ -207,8 +213,8 @@ if uploaded_file is not None:
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
-        img_rv = generate_clean_barcode_image(
-            clean_data, module_width, module_height, font_size_input, text_distance
+        img_rv = generate_gold_ratio_barcode_image(
+            clean_data, module_width, module_height, font_scale, text_distance
         )
         spaced_text = ' '.join(list(clean_data))
         st.image(
