@@ -1,4 +1,5 @@
 import io
+import os
 import barcode
 from barcode.writer import ImageWriter
 import pandas as pd
@@ -13,17 +14,16 @@ st.write(
     'CSVファイル（A列に管理番号等が入ったファイル）をアップロードすると、画面上で直接すべてのバーコードの見た目を確認できます。'
 )
 
-# 1. CSVファイルのアップロード（header=None を指定して1行目からデータとして読み込む）
+# 1. CSVファイルのアップロード
 uploaded_file = st.file_uploader(
     'STBリストのCSVファイルを選択してください', type=['csv']
 )
 
 if uploaded_file is not None:
-  # header=None を指定することで、1行目のデータ（19DDA52A000Eなど）がヘッダーとして消えるのを防ぐ
   df = pd.read_csv(uploaded_file, header=None)
   target_column = df.columns[0]
 
-  # データの抽出と指数表記（1.96222E+11など）の自動修復
+  # データの抽出と指数表記の自動修復
   cleaned_data_list = []
   for raw_data in df[target_column]:
     try:
@@ -43,7 +43,7 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
   )
 
-  # 2. バーコードの設定項目（見た目の微調整）
+  # 2. バーコードの設定項目
   st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
@@ -71,9 +71,13 @@ if uploaded_file is not None:
         'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
     )
 
-  # 3. 画面上のプレビュー一覧表示（CSVの順番通りにすべて描画）
+  # 3. 画面上のプレビュー一覧表示
   st.markdown('---')
   st.subheader('👀 バーコード一覧プレビュー')
+
+  # 同じフォルダ内にある arial.ttf のパスを特定
+  current_dir = os.path.dirname(os.path.abspath(__file__))
+  font_path = os.path.join(current_dir, 'arial.ttf')
 
   if cleaned_data_list:
     for i, clean_data in enumerate(cleaned_data_list, start=1):
@@ -81,7 +85,6 @@ if uploaded_file is not None:
         code39 = barcode.get_barcode_class('code39')
         barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
-        # font_path に 'arial.ttf' を指定して 0 のドットを解消
         options = {
             'module_width': module_width,
             'module_height': module_height,
@@ -89,8 +92,11 @@ if uploaded_file is not None:
             'text_distance': text_distance,
             'quiet_zone': 6.5,
             'write_text': True,
-            'font_path': 'arial.ttf',
         }
+
+        # 同梱したフォントファイルを指定
+        if os.path.exists(font_path):
+            options['font_path'] = font_path
 
         # 両端に * と、文字間にスペースを入れたフォーマット
         spaced_text = ' '.join(list(clean_data))
