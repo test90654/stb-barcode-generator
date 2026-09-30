@@ -1,100 +1,117 @@
 import io
-import zipfile
 import barcode
 from barcode.writer import ImageWriter
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title='STBバーコード一括生成ツール', page_icon='📦', layout='centered'
+    page_title='STBバーコード生成テスト', page_icon='🔍', layout='centered'
 )
 
-st.title('📦 STB（セットトップボックス）用バーコード一括生成')
+st.title('🔍 STBバーコード生成・プレビューテスト')
 st.write(
-    'STBの管理番号やシリアルナンバーが記載されたCSVファイルをアップロードすると、Code 39のバーコード画像をまとめて生成・ダウンロードできます。'
-)
-st.write(
-    '※Excel等で指数表記（例: 1.96222E+11）に変換されてしまった数値も、自動で正しい文字列に修復して処理します。'
+    '1つのコードをテスト生成して、ブラウザ上で見た目（高さや文字の重なり）を確認できるページです。'
 )
 
-# 1. ファイル選択（アップロード）ボタン
-uploaded_file = st.file_uploader(
-    'STBリストのCSVファイルを選択してください', type=['csv']
+# 1. 入力方法の選択（直接入力か、CSVから読み込むか）
+input_method = st.radio(
+    'データの入力方法を選んでください', ('直接入力する', 'CSVファイルから1つ選ぶ')
 )
 
-if uploaded_file is not None:
-  # CSVを読み込む
-  df = pd.read_csv(uploaded_file)
+target_data = ''
 
-  st.subheader('読み込んだデータ（プレビュー）')
-  st.dataframe(df.head())
+if input_method == '直接入力する':
+  target_data = st.text_input(
+      'バーコードにする文字列（例: 19A7B8D90016W）', value='19DDA52A000E'
+  )
+else:
+  uploaded_file = st.file_uploader(
+      'テスト用のCSVファイルを選択してください', type=['csv']
+  )
+  if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    columns = df.columns.tolist()
+    target_column = st.selectbox('バーコード化する列を選択:', columns)
 
-  # 2. バーコード化したい列の選択
-  columns = df.columns.tolist()
-  target_column = st.selectbox(
-      'バーコード化する文字列（STB番号など）が入っている列を選択してください:', columns
+    # リストから行番号（インデックス）を選ぶ
+    row_index = st.slider(
+        '何行目のデータを確認しますか？',
+        0,
+        len(df) - 1,
+        0,
+    )
+    raw_data = df.iloc[row_index][target_column]
+
+    # 指数表記（例: 1.96222E+11）の自動修復
+    try:
+      if isinstance(raw_data, float) or (
+          isinstance(raw_data, str) and 'e' in raw_data.lower()
+      ):
+        target_data = str(int(float(raw_data)))
+      else:
+        target_data = str(raw_data).strip()
+    except Exception:
+      target_data = str(raw_data).strip()
+
+    st.write(f'選択されたデータ: **{target_data}**')
+
+# 2. バーコード設定（ここで見た目を微調整できます）
+st.subheader('⚙️ バーコードの見た目調整（プレビューに即時反映）')
+col1, col2 = st.columns(2)
+
+with col1:
+  module_height = st.slider(
+      'バーの高さ (module_height)', min_value=5.0, max_value=30.0, value=15.0, step=1.0
+  )
+  font_size = st.slider(
+      '文字の大きさ (font_size)', min_value=6, max_value=20, value=10, step=1
   )
 
-  # 3. 実行ボタン
-  if st.button('STBバーコードを一括生成する'):
+with col2:
+  text_distance = st.slider(
+      '文字とバーの距離 (text_distance)',
+      min_value=1.0,
+      max_value=15.0,
+      value=7.0,
+      step=1.0,
+  )
+  module_width = st.slider(
+      'バーの太さ (module_width)', min_value=0.1, max_value=0.5, value=0.2, step=0.05
+  )
+
+# 3. バーコードの生成と画面表示
+if target_data:
+  try:
     code39 = barcode.get_barcode_class('code39')
+    rv = io.BytesIO()
+    barcode_instance = code39(target_data, writer=ImageWriter())
 
-    # 生成した画像をZIPにまとめるためのメモリ上の準備
-    zip_buffer = io.BytesIO()
-    success_count = 0
+    options = {
+        'module_width': module_width,
+        'module_height': module_height,
+        'font_size': font_size,
+        'text_distance': text_distance,
+        'write_text': True,
+    }
 
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-      for index, row in df.iterrows():
-        raw_data = row[target_column]
+    barcode_instance.write(rv, options=options)
+    rv.seek(0)
 
-        # 指数表記（例: 1.96222E+11）や小数点を自動修復する処理
-        try:
-          if isinstance(raw_data, float) or (
-              isinstance(raw_data, str) and 'e' in raw_data.lower()
-          ):
-            data = str(int(float(raw_data)))
-          else:
-            data = str(raw_data).strip()
-        except Exception:
-          data = str(raw_data).strip()
+    st.success('バーコードが生成されました！下のプレビューで確認してください。')
 
-        # 空白や欠損値（NaN）の場合はスキップ
-        if not data or data.lower() == 'nan':
-          continue
+    # 画面上に画像を直接表示
+    st.image(rv, caption=f'Code: {target_data}', use_container_width=True)
 
-        try:
-          # バーコード画像をメモリ上に生成
-          rv = io.BytesIO()
-          barcode_instance = code39(data, writer=ImageWriter())
+    # 個別ダウンロードボタン
+    rv.seek(0)
+    st.download_button(
+        label='📥 この画像をダウンロードする',
+        data=rv,
+        file_name=f'stb_barcode_{target_data}.png',
+        mime='image/png',
+    )
 
-          # バーコードの高さやフォントのバランスを調整するオプション
-          options = {
-              'module_width': 0.2,  # バーの太さ
-              'module_height': 12.0,  # バーの高さ（数値を下げると低くなります）
-              'font_size': 14,  # 文字の大きさ
-              'text_distance': 3.0,  # バーと文字の隙間
-              'write_text': True,  # 文字を表示する
-          }
-
-          # オプションを適用して書き出し
-          barcode_instance.write(rv, options=options)
-
-          # ZIPファイル内に追加
-          zip_file.writestr(f'stb_barcode_{data}.png', rv.getvalue())
-          success_count += 1
-        except Exception as e:
-          st.error(f'エラー ({data}): {e}')
-
-    if success_count > 0:
-      st.success(
-          f'✨ {success_count}件のSTBバーコード生成が完了しました！下のボタンからZIPでダウンロードできます。'
-      )
-
-      # 4. ZIPファイルのダウンロードボタン
-      zip_buffer.seek(0)
-      st.download_button(
-          label='📥 STBバーコード画像をZIPで一括ダウンロード',
-          data=zip_buffer,
-          file_name='stb_barcodes.zip',
-          mime='application/zip',
-      )
+  except Exception as e:
+    st.error(
+        f'バーコード生成エラー: {e} （※Code 39で使用できない文字が含まれている可能性があります）'
+    )
