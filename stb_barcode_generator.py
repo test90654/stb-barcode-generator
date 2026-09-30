@@ -13,6 +13,9 @@ st.title('📦 STB（セットトップボックス）用バーコード一括�
 st.write(
     'STBの管理番号やシリアルナンバーが記載されたCSVファイルをアップロードすると、Code 39のバーコード画像をまとめて生成・ダウンロードできます。'
 )
+st.write(
+    '※Excel等で指数表記（例: 1.96222E+11）に変換されてしまった数値も、自動で正しい文字列に修復して処理します。'
+)
 
 # 1. ファイル選択（アップロード）ボタン
 uploaded_file = st.file_uploader(
@@ -42,8 +45,21 @@ if uploaded_file is not None:
 
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
       for index, row in df.iterrows():
-        data = str(row[target_column]).strip()
-        if not data:
+        raw_data = row[target_column]
+
+        # 指数表記（例: 1.96222E+11）や小数点を自動修復する処理
+        try:
+          if isinstance(raw_data, float) or (
+              isinstance(raw_data, str) and 'e' in raw_data.lower()
+          ):
+            data = str(int(float(raw_data)))
+          else:
+            data = str(raw_data).strip()
+        except Exception:
+          data = str(raw_data).strip()
+
+        # 空白や欠損値（NaN）の場合はスキップ
+        if not data or data.lower() == 'nan':
           continue
 
         try:
@@ -52,7 +68,7 @@ if uploaded_file is not None:
           barcode_instance = code39(data, writer=ImageWriter())
           barcode_instance.write(rv)
 
-          # ZIPファイル内に追加（ファイル名にSTBとわかりやすいプレフィックスを付与）
+          # ZIPファイル内に追加
           zip_file.writestr(f'stb_barcode_{data}.png', rv.getvalue())
           success_count += 1
         except Exception as e:
