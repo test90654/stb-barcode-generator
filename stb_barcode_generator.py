@@ -1,16 +1,19 @@
+from datetime import datetime
 import io
+import zipfile
+import base64
 import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title='STBバーコードプレビューツール', page_icon='🔍', layout='centered'
+    page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('🔍 STBバーコード・画面プレビューツール（SVG高精度表示）')
+st.title('📦 STBバーコード生成・プレビューツール（SVG版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字崩れのない綺麗なSVGバーコードを画面上で確認できます。'
+    'CSVファイル（A列）をアップロードすると、綺麗なSVG形式での画面プレビュー確認と、ZIPでの一括ダウンロードが行えます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -70,40 +73,74 @@ if uploaded_file is not None:
         'バーの太さ (module_width)', min_value=0.2, max_value=1.0, value=0.4, step=0.05
     )
 
-  # 3. 画面上のプレビュー一覧表示（SVG形式）
-  st.markdown('---')
-  st.subheader('👀 バーコード一覧プレビュー')
+  # 共通のバーコード生成オプション
+  options = {
+      'module_width': module_width,
+      'module_height': module_height,
+      'font_size': font_size,
+      'text_distance': text_distance,
+      'quiet_zone': 6.5,
+      'write_text': True,
+  }
 
+  # 3. 一括ZIPダウンロードボタン
+  st.markdown('---')
   if cleaned_data_list:
+    if st.button('📦 すべてのバーコード画像をSVG形式でZIP一括ダウンロード'):
+      zip_buffer = io.BytesIO()
+      success_count = 0
+
+      with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for i, clean_data in enumerate(cleaned_data_list, start=1):
+          try:
+            code39 = barcode.get_barcode_class('code39')
+            # add_checksum=False でKやQの勝手な追加を防ぐ
+            barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
+
+            spaced_text = ' '.join(list(clean_data))
+            barcode_instance.default_text = f'* {spaced_text} *'
+
+            svg_io = io.BytesIO()
+            barcode_instance.write(svg_io, options=options)
+            
+            # 3桁連番付きファイル名でZIPに格納（CSVの並び順を完全維持）
+            filename = f'{i:03d}_stb_barcode_{clean_data}.svg'
+            zip_file.writestr(filename, svg_io.getvalue())
+            success_count += 1
+          except Exception:
+            pass
+
+      if success_count > 0:
+        current_date_str = datetime.now().strftime('%Y-%m-%d')
+        download_filename = f'stb_barcodes_svg_{current_date_str}.zip'
+
+        st.success(f'✨ {success_count}件のSVGバーコードのZIP作成が完了しました！')
+        zip_buffer.seek(0)
+        st.download_button(
+            label='📥 SVGバーコードZIPをダウンロード',
+            data=zip_buffer,
+            file_name=download_filename,
+            mime='application/zip',
+        )
+
+    # 4. 画面上のプレビュー一覧表示
+    st.markdown('---')
+    st.subheader('👀 バーコード一覧プレビュー')
+
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
         code39 = barcode.get_barcode_class('code39')
         barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
-        options = {
-            'module_width': module_width,
-            'module_height': module_height,
-            'font_size': font_size,
-            'text_distance': text_distance,
-            'quiet_zone': 6.5,
-            'write_text': True,
-        }
-
-        # 両端に * と、文字間にスペースを入れたフォーマット
         spaced_text = ' '.join(list(clean_data))
         barcode_instance.default_text = f'* {spaced_text} *'
 
-        # SVGWriterで正しくメモリ書き出しを行う修正
         svg_io = io.BytesIO()
         barcode_instance.write(svg_io, options=options)
         svg_io.seek(0)
-        svg_str = svg_io.getvalue().decode('utf-8')
 
-        # StreamlitでSVGを表示するための安全な埋め込み
         st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
         
-        # dataURI形式に変換して画像として表示
-        import base64
         b64 = base64.b64encode(svg_io.getvalue()).decode('utf-8')
         svg_data_url = f'data:image/svg+xml;base64,{b64}'
         st.image(svg_data_url, use_container_width=True)
