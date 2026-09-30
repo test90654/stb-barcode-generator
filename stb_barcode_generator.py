@@ -1,18 +1,16 @@
-from datetime import datetime
 import io
-import zipfile
 import barcode
 from barcode.writer import ImageWriter
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title='STBバーコード生成ツール', page_icon='📦', layout='centered'
+    page_title='STBバーコードプレビューツール', page_icon='🔍', layout='centered'
 )
 
-st.title('📦 STBバーコード一括生成・テストツール')
+st.title('🔍 STBバーコード・画面プレビューツール')
 st.write(
-    'CSVファイル（A列に管理番号等が入ったファイル）をアップロードするだけで、元のデータ通りの正確なバーコードを生成できます。'
+    'CSVファイル（A列に管理番号等が入ったファイル）をアップロードすると、画面上で直接すべてのバーコードの見た目を確認できます。'
 )
 
 # 1. CSVファイルのアップロード（自動的に先頭列をターゲットにします）
@@ -72,85 +70,39 @@ if uploaded_file is not None:
         'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
     )
 
-  # 3. プレビュー確認（最初の1件目）
+  # 3. 画面上のプレビュー一覧表示（CSVの順番通りにすべて描画）
+  st.markdown('---')
+  st.subheader('👀 バーコード一覧プレビュー')
+
   if cleaned_data_list:
-    st.subheader('🔍 プレビュー（最初の1件目の確認）')
-    sample_data = cleaned_data_list[0]
+    for i, clean_data in enumerate(cleaned_data_list, start=1):
+      try:
+        code39 = barcode.get_barcode_class('code39')
+        # 余計な文字が追加されないよう add_checksum=False を指定
+        barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
-    try:
-      code39 = barcode.get_barcode_class('code39')
-      # 【重要】add_checksum=False を指定して、勝手にKやQなどの文字が追加されるのを防ぐ
-      barcode_instance = code39(sample_data, writer=ImageWriter(), add_checksum=False)
+        options = {
+            'module_width': module_width,
+            'module_height': module_height,
+            'font_size': font_size,
+            'text_distance': text_distance,
+            'quiet_zone': 6.5,
+            'write_text': True,
+        }
 
-      options = {
-          'module_width': module_width,
-          'module_height': module_height,
-          'font_size': font_size,
-          'text_distance': text_distance,
-          'quiet_zone': 6.5,
-          'write_text': True,
-      }
+        # 両端に * と、文字間にスペースを入れたフォーマット
+        spaced_text = ' '.join(list(clean_data))
+        barcode_instance.default_text = f'* {spaced_text} *'
 
-      spaced_text = ' '.join(list(sample_data))
-      barcode_instance.default_text = f'* {spaced_text} *'
+        rv = io.BytesIO()
+        barcode_instance.write(rv, options=options)
+        rv.seek(0)
 
-      sample_rv = io.BytesIO()
-      barcode_instance.write(sample_rv, options=options)
-      sample_rv.seek(0)
-
-      st.image(
-          sample_rv, caption=f'サンプル確認: *{spaced_text}*', use_container_width=True
-      )
-    except Exception as e:
-      st.error(f'プレビュー生成エラー: {e}')
-
-    # 4. 一括生成・ZIPダウンロードボタン
-    st.markdown('---')
-    if st.button('📦 すべてのバーコード画像をZIPで一括生成する'):
-      zip_buffer = io.BytesIO()
-      success_count = c = 0
-
-      with zipfile.ZipFile(
-          zip_buffer, 'w', zipfile.ZIP_DEFLATED
-      ) as zip_file:
-        for i, clean_data in enumerate(cleaned_data_list, start=1):
-          try:
-            code39 = barcode.get_barcode_class('code39')
-            # こちらでも同様に add_checksum=False を適用
-            barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
-
-            options = {
-                'module_width': module_width,
-                'module_height': module_height,
-                'font_size': font_size,
-                'text_distance': text_distance,
-                'quiet_zone': 6.5,
-                'write_text': True,
-            }
-
-            spaced_text = ' '.join(list(clean_data))
-            barcode_instance.default_text = f'* {spaced_text} *'
-
-            rv = io.BytesIO()
-            barcode_instance.write(rv, options=options)
-
-            filename = f'{i:03d}_stb_barcode_{clean_data}.png'
-            zip_file.writestr(filename, rv.getvalue())
-            success_count += 1
-          except Exception:
-            pass
-
-      if success_count > 0:
-        current_date_str = datetime.now().strftime('%Y-%m-%d')
-        download_filename = f'stb_barcodes_{current_date_str}.zip'
-
-        st.success(
-            f'✨ {success_count}件のバーコード生成が完了しました！下のボタンからダウンロードできます。'
+        # 画面に順番通りに画像を表示
+        st.image(
+            rv,
+            caption=f'[{i:03d}] Code: *{spaced_text}*',
+            use_container_width=True,
         )
-        zip_buffer.seek(0)
-        st.download_button(
-            label='📥 バーコード画像をZIPで一括ダウンロード',
-            data=zip_buffer,
-            file_name=download_filename,
-            mime='application/zip',
-        )
+      except Exception as e:
+        st.error(f'プレビュー生成エラー ({clean_data}): {e}')
