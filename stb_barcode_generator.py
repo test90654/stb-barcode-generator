@@ -13,9 +13,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（文字間隔調整版）')
+st.title('📦 STBバーコード生成・プレビューツール（文字間隔広範囲対応版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、文字間隔が最適化された綺麗なSVGバーコードをプレビュー・ZIPダウンロードできます。'
+    'CSVファイル（A列）をアップロードすると、文字間隔を大きく広げてバーコード幅に最適化できるSVGバーコードをプレビュー・ZIPダウンロードできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -83,17 +83,17 @@ if uploaded_file is not None:
         step=0.05,
     )
     
-    # 【追加】文字の間隔（トラッキング）をスライダーで自由に調整できるようにしました
+    # 【上限を30.0に拡張】文字の間隔をしっかり広く調整できるように変更
     letter_spacing = st.slider(
         '文字の間隔 (letter_spacing)',
         min_value=1.0,
-        max_value=10.0,
-        value=3.5,
-        step=0.5,
+        max_value=30.0,
+        value=12.0,  # 理想の間隔を探しやすいようデフォルトも12.0に引き上げ
+        step=1.0,
     )
 
 
-  # XMLパースを用いて安全に文字間隔を拡張するSVG生成関数
+  # XMLパースを用いて文字間隔を拡張するSVG生成関数
   def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -107,7 +107,6 @@ if uploaded_file is not None:
         'write_text': True,
     }
 
-    # 各文字の間に半角スペースを挟む
     spaced_text = ' '.join(list(clean_data))
     barcode_instance.default_text = f'* {spaced_text} *'
 
@@ -116,25 +115,17 @@ if uploaded_file is not None:
     svg_content = svg_io.getvalue().decode('utf-8')
 
     try:
-      # XMLのデフォルト名前空間（xmlns）のせいでElementTreeが要素を見失うのを防ぐための処理
       ET.register_namespace('', 'http://www.w3.org/2000/svg')
-      
-      # 文字列をXMLとして安全にパース
       root = ET.fromstring(svg_content)
       
-      # SVG内のすべての <text> タグを検索して letter-spacing を付与
-      # （名前空間に対応するためワイルドカードを使用）
       for elem in root.iter():
         if elem.tag.endswith('text'):
           existing_style = elem.get('style', '')
-          # 既存のスタイルに letter-spacing を追加
           new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
           elem.set('style', new_style)
 
-      # 再びきれいなXML文字列に変換
       svg_content = ET.tostring(root, encoding='utf-8').decode('utf-8')
     except Exception:
-      # 万が一パースに失敗した場合は元のSVGをそのまま返す
       pass
 
     return svg_content.encode('utf-8')
