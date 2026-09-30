@@ -1,3 +1,4 @@
+from datetime import datetime
 import io
 import zipfile
 import barcode
@@ -14,16 +15,13 @@ st.write(
     'CSVファイル（A列に管理番号等が入ったファイル）をアップロードするだけで、理想の見た目でバーコードを生成できます。'
 )
 
-# 1. CSVファイルのアップロード（列選択などは省き、自動的に先頭列をターゲットにします）
+# 1. CSVファイルのアップロード（自動的に先頭列をターゲットにします）
 uploaded_file = st.file_uploader(
     'STBリストのCSVファイルを選択してください', type=['csv']
 )
 
 if uploaded_file is not None:
-  # CSVを読み込む（ヘッダーなし、または先頭行をデータとして扱う場合などに対応できるよう柔軟に）
   df = pd.read_csv(uploaded_file)
-
-  # 自動的に先頭の列（A列）をターゲット列として使用する
   target_column = df.columns[0]
 
   # データの抽出と指数表記（1.96222E+11など）の自動修復
@@ -71,14 +69,10 @@ if uploaded_file is not None:
         step=1.0,
     )
     module_width = st.slider(
-        'バーの太さ (module_width)',
-        min_value=1.0,
-        max_value=1.0,  # 安定した太さ
-        value=0.3,
-        step=0.05,
+        'バーの太さ (module_width)', min_value=0.1, max_value=1.0, value=0.3, step=0.05
     )
 
-  # 3. プレビュー確認（先頭の1件目を例として表示）
+  # 3. プレビュー確認（最初の1件目）
   if cleaned_data_list:
     st.subheader('🔍 プレビュー（最初の1件目の確認）')
     sample_data = cleaned_data_list[0]
@@ -96,7 +90,6 @@ if uploaded_file is not None:
           'write_text': True,
       }
 
-      # 描画文字を「両端アスタリスク ＆ 文字間にスペース」が入った形式にカスタマイズ
       spaced_text = ' '.join(list(sample_data))
       barcode_instance.default_text = f'* {spaced_text} *'
 
@@ -110,7 +103,7 @@ if uploaded_file is not None:
     except Exception as e:
       st.error(f'プレビュー生成エラー: {e}')
 
-    # 4. 一括生成・ZIPダウンロードボタン
+    # 4. 一括生成・ZIPダウンロードボタン（日付入りのファイル名）
     st.markdown('---')
     if st.button('📦 すべてのバーコード画像をZIPで一括生成する'):
       zip_buffer = io.BytesIO()
@@ -145,6 +138,10 @@ if uploaded_file is not None:
             pass
 
       if success_count > 0:
+        # ダウンロード時の日付を取得してファイル名に付与（例: stb_barcodes_2026-09-30.zip）
+        current_date_str = datetime.now().strftime('%Y-%m-%d')
+        download_filename = f'stb_barcodes_{current_date_str}.zip'
+
         st.success(
             f'✨ {success_count}件のバーコード生成が完了しました！下のボタンからダウンロードできます。'
         )
@@ -152,6 +149,6 @@ if uploaded_file is not None:
         st.download_button(
             label='📥 バーコード画像をZIPで一括ダウンロード',
             data=zip_buffer,
-            file_name='stb_barcodes.zip',
+            file_name=download_filename,
             mime='application/zip',
         )
