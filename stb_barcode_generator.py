@@ -1,6 +1,7 @@
 from datetime import datetime
 import io
 import os
+import re
 import zipfile
 import base64
 import barcode
@@ -13,9 +14,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（6個セット・機種名対応版）')
+st.title('📦 STBバーコード生成・プレビューツール（ファイル名自動抽出・6個セット版）')
 st.write(
-    'CSVファイル（A列）をアップロードすると、機種名入りのバーコードを縦2列×横3列（計6個）のセットで綺麗に配置したSVGを生成できます。'
+    'CSVファイル名を自動解析して機種名をバーコードに付与し、縦2行×横3列（計6個）のSVGシートを生成します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -24,6 +25,22 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
+  # ファイル名から機種名を自動抽出（例: "TZ-LS200P49台.csv" -> "TZ-LS200P"）
+  filename_raw = uploaded_file.name
+  extracted_model = "STB-MODEL"
+  
+  # 「数字や台」の直前までの文字列をモデル名として抽出するパターン
+  match = re.match(r"^(.+?)(?:\d+台|\d+件|\.csv)", filename_raw)
+  if match:
+    extracted_model = match.group(1).strip()
+  else:
+    # 拡張子を除いた部分をそのまま使う
+    extracted_model = os.path.splitext(filename_raw)[0]
+    # 末尾の数字などを削る調整
+    extracted_model = re.sub(r'\d+.*$', '', extracted_model).strip()
+    if not extracted_model:
+      extracted_model = os.path.splitext(filename_raw)[0]
+
   df = pd.read_csv(uploaded_file, header=None)
   target_column = df.columns[0]
 
@@ -44,16 +61,15 @@ if uploaded_file is not None:
       cleaned_data_list.append(val)
 
   st.success(
-      f'✨ CSVから **{len(cleaned_data_list)}件** のデータを正常に読み込みました！'
+      f'✨ CSVから **{len(cleaned_data_list)}件** のデータを読み込みました！（自動抽出された機種名: **{extracted_model}**）'
   )
 
-  # 2. バーコードの設定項目 ＆ 機種名入力
+  # 2. バーコードの設定項目 ＆ 機種名の編集・確認
   st.subheader('⚙️ バーコード・ラベル設定')
   
-  # 機種名の入力欄
   model_name_input = st.text_input(
-      'バーコード上に表示する機種名（バーコード上・左揃え）',
-      value='STB-MODEL-01'
+      'バーコード上に表示する機種名（自動抽出結果・編集可能）',
+      value=extracted_model
   )
 
   col1, col2 = st.columns(2)
@@ -98,7 +114,7 @@ if uploaded_file is not None:
     )
 
 
-  # 1個分のバーコードSVGを生成し、機種名追加と6個グリッド化を行う関数
+  # 壊れない安全なSVGグリッド生成関数（1個分のSVGを構造解析して正しく3×2にタイリング）
   def generate_grid_svg_barcode(clean_data, model_name, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -134,36 +150,37 @@ if uploaded_file is not None:
       orig_width_str = root.get('width', '200')
       orig_height_str = root.get('height', '50')
       
-      # 単位（pxなど）を取り除いて数値化
       orig_w = float(''.join(filter(lambda c: c.isdigit() or c == '.', orig_width_str)))
       orig_height = float(''.join(filter(lambda c: c.isdigit() or c == '.', orig_height_str)))
 
-      # 機種名を表示するための上部スペースを確保し、元のSVG要素全体を下方向に少しずらす
-      header_height = 22  # 機種名用の余白
+      # 機種名用ヘッダーの高さ
+      header_height = 20
       new_single_h = orig_height + header_height
 
-      # 新しい1個分のグループを作成
+      # 1個分のパーツを格納するグループ <g> を作成
       single_g = ET.Element('g')
 
-      # 機種名をバーコードの上部・左揃えで追加
+      # 機種名（左揃え）を追加
       if model_name:
         model_text = ET.Element('text')
-        model_text.set('x', '10')  # 左端からの余白
-        model_text.set('y', '15')  # 上部位置
-        model_text.set('style', 'font-family: Arial, sans-serif; font-size: 11px; font-weight: bold; fill: black;')
+        model_text.set('x', '10')
+        model_text.set('y', '14')
+        model_text.set('style', 'font-family: Arial, sans-serif; font-size: 10px; font-weight: bold; fill: black;')
         model_text.text = model_name
         single_g.append(model_text)
 
-      # バーコード本体の要素（ rect や g など）を下方向にずらしてグループに格納
+      # バーコード本体の要素を下へ移動
       barcode_g = ET.Element('g')
       barcode_g.set('transform', f'translate(0, {header_height})')
+      
+      # rootの子要素をすべて移行
       for child in list(root):
         root.remove(child)
         barcode_g.append(child)
       
       single_g.append(barcode_g)
 
-      # 2. 縦2列×横3列（計6個）のグリッドレイアウトを構築
+      # 2. 縦2行×横3列（計6個）のグリッド全体の寸法計算
       cols = 3
       rows = 2
       margin_x = 15
@@ -172,14 +189,21 @@ if uploaded_file is not None:
       total_w = cols * orig_w + (cols - 1) * margin_x
       total_h = rows * new_single_h + (rows - 1) * margin_y
 
-      # 親SVGコンテナを作成
+      # 新しい親SVGコンテナを作成
       parent_svg = ET.Element('svg')
       parent_svg.set('xmlns', 'http://www.w3.org/2000/svg')
       parent_svg.set('width', f'{total_w}')
       parent_svg.set('height', f'{total_h}')
       parent_svg.set('viewBox', f'0 0 {total_w} {total_h}')
+      
+      # 背景を白に設定
+      bg_rect = ET.Element('rect')
+      bg_rect.set('width', '100%')
+      bg_rect.set('height', '100%')
+      bg_rect.set('fill', 'white')
+      parent_svg.append(bg_rect)
 
-      # 3×2の座標にそれぞれ配置
+      # 3×2の各セルに配置
       for r in range(rows):
         for c in range(cols):
           x_offset = c * (orig_w + margin_x)
@@ -188,17 +212,14 @@ if uploaded_file is not None:
           cell_g = ET.Element('g')
           cell_g.set('transform', f'translate({x_offset}, {y_offset})')
           
-          # single_gの中身をコピーして追加
-          # (ET.tostring経由でディープコピーの代わりにXML文字列化→パースを行うことで独立させる)
-          cell_str = ET.tostring(single_g, encoding='utf-8')
-          cell_elem = ET.fromstring(cell_str)
+          # 独立したコピーとして追加
+          cell_elem = ET.fromstring(ET.tostring(single_g, encoding='utf-8'))
           cell_g.append(cell_elem)
           
           parent_svg.append(cell_g)
 
       svg_content = ET.tostring(parent_svg, encoding='utf-8').decode('utf-8')
-    except Exception as e:
-      # 万が一エラーが発生した場合はそのまま返す
+    except Exception:
       pass
 
     return svg_content.encode('utf-8')
@@ -207,9 +228,9 @@ if uploaded_file is not None:
   # 3. 一括ZIPダウンロードボタン（SVG形式）
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 すべてのバーコード（6個セット版）をSVG形式でZIP一括ダウンロード'):
+    if st.button('📦 すべての6個セットバーコードをSVG形式でZIP一括ダウンロード'):
       zip_buffer = io.BytesIO()
-      success_count = c = 0
+      success_count = 0
 
       with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for i, clean_data in enumerate(cleaned_data_list, start=1):
