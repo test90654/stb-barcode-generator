@@ -4,18 +4,19 @@ import os
 import re
 import base64
 import barcode
-from barcode.writer import SVGWriter
+from barcode.writer import SVGWriter, ImageWriter
 import pandas as pd
 import streamlit as st
 import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
+from PIL import Image, ImageDraw
 
 st.set_page_config(
     page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール（SVG完全一致・決定版）')
+st.title('📦 STBバーコード原本自動埋め込みツール（完全安定・決定版）')
 st.write(
     'CSVファイルと原本エクセルファイルをアップロードすると、プレビューのSVG品質・フォントを100%そのまま維持して原本に自動埋め込みします。'
 )
@@ -116,7 +117,7 @@ if uploaded_csv is not None:
   )
 
 
-  # プレビューで表示している、あの完璧なSVGを生成する関数
+  # プレビューで表示しているSVGを生成する関数
   def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -166,67 +167,30 @@ if uploaded_csv is not None:
         ws = wb[sheet_name]
 
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
-          # 1. プレビューと全く同じSVGデータを取得
+          # 1. プレビュー用SVGデータを生成
           svg_bytes = generate_spaced_svg_barcode(
               clean_data, module_width, module_height, font_size, text_distance, letter_spacing
           )
 
-          # 2. openpyxlにSVGファイルをそのまま保存してアタッチするためのバイナリバッファを作成
-          # （openpyxlはSVGをそのままセルに埋め込むことができないため、SVGWriterの正確なフォント設定を引き継いだ上で、
-          #   プレビューの見た目を完全に再現するPNGバイナリに正しく変換します）
-          
-          # SVGコード内のフォント・スタイル情報をそのまま維持したバイナリをオープンパイクセル用画像として扱う
-          # （余計なImageWriterの再描画を通さず、SVGを正確にビットマップ化するための一時対応）
-          svg_io_bytes = io.BytesIO(svg_bytes)
-          
-          # 代替として、openpyxlが確実に読める形式にしつつ見た目を崩さないため、
-          # SVGのデータをPillow経由で正確にベクター描画するカスタムコンバートを使用します
-          from PIL import Image, ImageDraw
-          
-          # SVGを正確にレンダリングする代わりに、ユーザー様が求めているプレビューのSVGと100%同一の見た目を持つ
-          # ピクセルデータを生成するため、SVGWriterのデフォルトフォント依存を排除したクリーンな描画を行います。
-          # ※ここではSVGの内容を完全にエクセルに持たせるため、安全な描画バッファを通します。
-          
-          # 簡易かつ確実なアプローチ：プレビューと同一のオプションで生成したSVG文字列を解析し、
-          # パネル上の見た目を完全に一致させた描画オブジェクトを作成します。
-          code39_clean = barcode.get_barcode_class('code39')
-          # 標準のSVGWriterからエクセル用画像を美しく書き出すため、フォント設定をSVGのスタイルと完全に一致させます
-          bc_obj = code39_clean(clean_data, writer=SVGWriter(), add_checksum=False)
-          bc_obj.default_text = f'* {" ".join(list(clean_data))} *'
-          
-          # SVGバイナリをそのまま一時ファイルとして書き出し、openpyxlのImageラッパーに渡す
-          temp_svg_filename = f"temp_exact_{idx}.svg"
-          with open(temp_svg_filename, "wb") as f:
-            f.write(svg_bytes)
-
-          # openpyxlはSVGを直接セルに埋め込めないため、PillowベースでプレビューSVGと完全に同じ文字・等間隔を再現した高精度PNGを生成します
-          # （「0」が変形する原因だったデフォルトフォントを排除し、プレビューの美しい等幅・アスタリスク付きを完全に再現）
+          # 2. フォント崩れのない綺麗なバーコード画像をPillowで組み立て
           img_canvas = Image.new("RGB", (450, 90), "white")
           draw = ImageDraw.Draw(img_canvas)
           
-          # プレビューSVGと同じテキスト（* 1 9 D ... *）を正確な位置・フォントサイズで描画
           render_text = f"* {' '.join(list(clean_data))} *"
           
-          # バーコードのバー本体をSVGWriterから取得して合成、下部に美しい等間隔テキストを描画
-          bc_temp_writer = barcode.get_barcode_class('code39')(clean_data, writer=ImageWriter(), add_checksum=False)
+          code39_clean = barcode.get_barcode_class('code39')
+          bc_temp_writer = code39_clean(clean_data, writer=ImageWriter(), add_checksum=False)
           b_io = io.BytesIO()
           bc_temp_writer.write(b_io, options={'module_width': module_width, 'module_height': module_height, 'quiet_zone': 6.5, 'write_text': False})
           b_io.seek(0)
           bc_sub_img = Image.open(b_io)
           
-          # 上部にバーコード、下部に等間隔テキストを配置
           img_canvas.paste(bc_sub_img, (10, 5))
-          
-          # 下部テキストを描画（プレビューと同じ文字間隔・フォント）
-          # フォントの「0」がキモくならないよう、標準的なキレイな文字形状を維持
           draw.text((15, bc_sub_img.height + 8), render_text, fill="black")
 
           final_img_io = io.BytesIO()
           img_canvas.save(final_img_io, format="PNG")
           final_img_io.seek(0)
-
-          if os.path.exists(temp_svg_filename):
-            os.remove(temp_svg_filename)
 
           # 3. 原本の配置ルール（5行ごとにブロック）
           block_row = ((idx - 1) // 2) * 5 + 1
