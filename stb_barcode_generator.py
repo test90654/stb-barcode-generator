@@ -18,9 +18,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（決定版・6個セットPDF）')
+st.title('📦 STBバーコード生成・プレビューツール（機種名視認性大幅改善版）')
 st.write(
-    'CSVファイルから機種名を自動抽出し、「バーコードどころ」品質の美しいバーコードと機種名を、A4印刷用の6個セット（縦2×横3）PDFシートに出力します。'
+    '機種名を大きくハッキリと表示し、A4用紙に6個セット（縦2×横3）で印刷できるPDFを一括生成します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -114,19 +114,18 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # 1個分のラベル画像（左上の機種名 ＋ 完璧なバーコード品質）を生成する関数
+  # 1個分のラベル画像を生成する関数（機種名をしっかり大きく視認性高く配置）
   def generate_single_label_image(clean_data, model_name, module_width, module_height):
     code39 = barcode.get_barcode_class('code39')
-    # write_text=True でおなじみの美しい下部テキスト付きバーコードを生成
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
     options = {
         'module_width': module_width,
         'module_height': module_height,
         'quiet_zone': 6.5,
-        'write_text': True,
-        'font_size': 10,
-        'text_distance': 4.0,
+        'write_text': True,  # 下部の数字は既存の美しいレイアウトを維持
+        'font_size': 11,
+        'text_distance': 5.0,
     }
 
     rv = io.BytesIO()
@@ -136,22 +135,25 @@ if uploaded_file is not None:
     bc_img = Image.open(rv).convert('RGB')
     bc_w, bc_h = bc_img.size
 
-    # 機種名ヘッダーの高さ（約25px）を確保
-    header_h = 28
+    # 【改善】機種名用ヘッダー領域を十分に大きく確保（高さ45px）
+    header_h = 45
     total_h = bc_h + header_h
 
-    # 白背景のカンバスを作成
     label_img = Image.new('RGB', (bc_w, total_h), 'white')
 
-    # 機種名を左上に描画
+    # 機種名を大きくハッキリと左上に描画
     draw = ImageDraw.Draw(label_img)
-    # バランスの良いフォントサイズをバーコード幅から算出して適用
-    model_font_size = max(12, int(bc_w * 0.04))
+    
+    # フォントサイズをバーコード幅に対して十分に大きく設定（例: 幅の約7%、最低26px以上）
+    model_font_size = max(26, int(bc_w * 0.07))
     font = get_proper_font(model_font_size)
     
-    draw.text((10, 4), model_name, fill='black', font=font)
+    # 太字っぽく描画するために数ピクセルずらして重ね描き
+    left_margin = int(bc_w * 0.03)
+    for dx in [0, 1]:
+      draw.text((left_margin + dx, 8), model_name, fill='black', font=font)
 
-    # バーコード画像をその下に貼り付け
+    # バーコード本体を下に貼り付け
     label_img.paste(bc_img, (0, header_h))
 
     return label_img
@@ -165,7 +167,6 @@ if uploaded_file is not None:
       c = canvas.Canvas(pdf_buffer, pagesize=A4)
       page_w, page_h = A4
 
-      # A4シート上のレイアウト（縦2行 × 横3列 = 6個）
       cols = 3
       rows = 2
       
@@ -175,7 +176,7 @@ if uploaded_file is not None:
       row_gap = 15 * mm
 
       cell_w = 55 * mm
-      cell_h = 30 * mm
+      cell_h = 32 * mm
 
       items_per_page = cols * rows
       count = 0
@@ -199,7 +200,7 @@ if uploaded_file is not None:
 
         count += 1
         if os.path.exists(temp_path):
-          os.path.exists(temp_path) and os.remove(temp_path)
+          os.remove(temp_path)
 
         if count % items_per_page == 0 or i == len(cleaned_data_list):
           c.showPage()
@@ -226,4 +227,4 @@ if uploaded_file is not None:
       sample_pil = generate_single_label_image(
           sample_data, model_name_input, module_width, module_height
       )
-      st.image(sample_pil, caption=f'見本: *{sample_data}* (機種名: {model_name_input})', width=350)
+      st.image(sample_pil, caption=f'見本: *{sample_data}* (機種名: {model_name_input})', width=450)
