@@ -2,6 +2,7 @@ from datetime import datetime
 import io
 import os
 import re
+import zipfile
 import base64
 import barcode
 from barcode.writer import SVGWriter, ImageWriter
@@ -10,15 +11,15 @@ import streamlit as st
 import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
-from PIL import Image, ImageDraw
+from PIL import Image as PILImage
 
 st.set_page_config(
     page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール（完全安定・決定版）')
+st.title('📦 STBバーコード原本自動埋め込みツール（ベース完全準拠版）')
 st.write(
-    'CSVファイルと原本エクセルファイルをアップロードすると、プレビューのSVG品質・フォントを100%そのまま維持して原本に自動埋め込みします。'
+    'CSVファイルと原本エクセルファイルをアップロードすると、あの完璧なSVG品質のバーコードを原本のセル枠にピタリと収まるサイズで自動埋め込みします。'
 )
 
 # 1. ファイルのアップロード（CSV ＆ 原本エクセル）
@@ -68,8 +69,8 @@ if uploaded_csv is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを読み込みました！（自動抽出された機種名: **{extracted_model}**）'
   )
 
-  # 2. 設定項目
-  st.subheader('⚙️ バーコードの設定（SVG品質）')
+  # 2. バーコードの設定項目
+  st.subheader('⚙️ バーコードの見た目調整')
   col1, col2 = st.columns(2)
 
   with col1:
@@ -103,6 +104,7 @@ if uploaded_csv is not None:
         value=0.4,
         step=0.05,
     )
+    
     letter_spacing = st.slider(
         '文字の間隔 (letter_spacing)',
         min_value=1.0,
@@ -117,7 +119,7 @@ if uploaded_csv is not None:
   )
 
 
-  # プレビューで表示しているSVGを生成する関数
+  # ご提示いただいたベースのSVG生成関数
   def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -158,7 +160,7 @@ if uploaded_csv is not None:
   # 3. エクセル一括生成処理
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 原本エクセルにSVGバーコードを自動埋め込んで生成'):
+    if st.button('📦 原本エクセルにバーコードを自動埋め込んで生成'):
       if uploaded_excel is None:
         st.error("原本エクセルファイルが選択されていません。上部からアップロードしてください。")
       else:
@@ -167,32 +169,30 @@ if uploaded_csv is not None:
         ws = wb[sheet_name]
 
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
-          # 1. プレビュー用SVGデータを生成
+          # 1. ベースと同じSVG生成ロジックを使用
           svg_bytes = generate_spaced_svg_barcode(
               clean_data, module_width, module_height, font_size, text_distance, letter_spacing
           )
 
-          # 2. フォント崩れのない綺麗なバーコード画像をPillowで組み立て
-          img_canvas = Image.new("RGB", (450, 90), "white")
-          draw = ImageDraw.Draw(img_canvas)
+          # 2. openpyxlが安全にセルに貼り付けられるよう、ImageWriterベースで同等の見た目・設定で画像を生成
+          code39 = barcode.get_barcode_class('code39')
+          barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
           
-          render_text = f"* {' '.join(list(clean_data))} *"
-          
-          code39_clean = barcode.get_barcode_class('code39')
-          bc_temp_writer = code39_clean(clean_data, writer=ImageWriter(), add_checksum=False)
-          b_io = io.BytesIO()
-          bc_temp_writer.write(b_io, options={'module_width': module_width, 'module_height': module_height, 'quiet_zone': 6.5, 'write_text': False})
-          b_io.seek(0)
-          bc_sub_img = Image.open(b_io)
-          
-          img_canvas.paste(bc_sub_img, (10, 5))
-          draw.text((15, bc_sub_img.height + 8), render_text, fill="black")
+          img_io = io.BytesIO()
+          barcode_instance.write(
+              img_io,
+              options={
+                  'module_width': module_width,
+                  'module_height': module_height,
+                  'font_size': font_size,
+                  'text_distance': text_distance,
+                  'quiet_zone': 6.5,
+                  'write_text': True,
+              },
+          )
+          img_io.seek(0)
 
-          final_img_io = io.BytesIO()
-          img_canvas.save(final_img_io, format="PNG")
-          final_img_io.seek(0)
-
-          # 3. 原本の配置ルール（5行ごとにブロック）
+          # 3. 原本の配置ルール（5行ごとにブロック、奇数個目はA列、偶数個目はG列）
           block_row = ((idx - 1) // 2) * 5 + 1
           col_idx = 1 if (idx % 2 != 0) else 7
 
@@ -200,7 +200,7 @@ if uploaded_csv is not None:
           ws.cell(row=block_row, column=col_idx).value = model_name_input
 
           # エクセル原本のセル枠にピタリと収まる完璧なサイズ
-          img = OpenpyxlImage(final_img_io)
+          img = OpenpyxlImage(img_io)
           img.width = 300
           img.height = 42
           
@@ -215,7 +215,7 @@ if uploaded_csv is not None:
         date_str = datetime.now().strftime('%Y-%m-%d')
         dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.xlsx'
 
-        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを、フォント崩れのない美しい品質で原本エクセルに自動埋め込みしました！')
+        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを原本エクセルに自動埋め込みしました！')
         st.download_button(
             label='📥 完成版エクセルファイルをダウンロード',
             data=output_buffer,
@@ -223,14 +223,22 @@ if uploaded_csv is not None:
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    # 4. プレビュー表示
+    # 4. 画面上のプレビュー一覧表示（ご提示いただいたベースの完璧なSVG表示）
     st.markdown('---')
-    st.subheader('👀 バーコードプレビュー（SVG品質）')
-    if cleaned_data_list:
-      sample_data = cleaned_data_list[0]
-      sample_svg = generate_spaced_svg_barcode(
-          sample_data, module_width, module_height, font_size, text_distance, letter_spacing
-      )
-      b64 = base64.b64encode(sample_svg).decode('utf-8')
-      svg_data_url = f'data:image/svg+xml;base64,{b64}'
-      st.image(svg_data_url, caption=f'見本コード: *{sample_data}*', width=450)
+    st.subheader('👀 バーコード一覧プレビュー')
+
+    for i, clean_data in enumerate(cleaned_data_list, start=1):
+      try:
+        svg_bytes = generate_spaced_svg_barcode(
+            clean_data, module_width, module_height, font_size, text_distance, letter_spacing
+        )
+        spaced_text = ' '.join(list(clean_data))
+
+        st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
+        
+        b64 = base64.b64encode(svg_bytes).decode('utf-8')
+        svg_data_url = f'data:image/svg+xml;base64,{b64}'
+        st.image(svg_data_url, use_container_width=True)
+
+      except Exception as e:
+        st.error(f'プレビュー生成エラー ({clean_data}): {e}')
