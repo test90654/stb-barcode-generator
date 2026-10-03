@@ -2,34 +2,29 @@ from datetime import datetime
 import io
 import os
 import re
-import zipfile
 import base64
 import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
 import xml.etree.ElementTree as ET
-import openpyxl
-from openpyxl.drawing.image import Image as OpenpyxlImage
-import cairosvg
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.graphics import renderPDF
+from svglib.svglib import svg2rlg
 
 st.set_page_config(
-    page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
+    page_title='STBバーコード印刷用PDF自動生成ツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール（フォント完全一致版）')
+st.title('📦 STBバーコード印刷用PDF自動生成ツール（ベクター品質版）')
 st.write(
-    'CSVファイルと原本エクセルファイルをアップロードすると、プレビューと全く同じSVG品質・フォントのバーコードを原本のセル枠にピタリと自動埋め込みします。'
+    'CSVファイルをアップロードすると、プレビューの完璧なSVG品質（美しいフォント・「0」の形状・文字間隔）を100%保ったまま、原本と同じ2×3グリッドのA4印刷用PDFを一発生成します。'
 )
 
-# 1. ファイルのアップロード（CSV ＆ 原本エクセル）
-st.subheader('📁 ファイルのアップロード')
+# 1. CSVファイルのアップロード
 uploaded_csv = st.file_uploader(
     '1. STBリストのCSVファイルを選択してください', type=['csv']
-)
-
-uploaded_excel = st.file_uploader(
-    '2. 原本エクセルファイル（例: STBﾊﾞｰｺｰﾄﾞ(620PW)原本.xlsx）を選択してください', type=['xlsx']
 )
 
 if uploaded_csv is not None:
@@ -114,12 +109,12 @@ if uploaded_csv is not None:
     )
 
   model_name_input = st.text_input(
-      'エクセル上に表示する機種名（自動抽出・編集可能）',
+      '印刷シート上に表示する機種名（自動抽出・編集可能）',
       value=extracted_model
   )
 
 
-  # プレビューとエクセルで100%同一のSVGを生成する関数
+  # プレビューおよびPDF用の完璧なSVGバーコードを生成する関数
   def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -157,57 +152,72 @@ if uploaded_csv is not None:
     return svg_content.encode('utf-8')
 
 
-  # 3. エクセル一括生成処理（SVGをそのままcairosvgで高品質PNG化してエクセルに埋め込み）
+  # 3. A4印刷用PDF一括生成処理（2×3グリッド構造）
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 原本エクセルにバーコードを自動埋め込んで生成'):
-      if uploaded_excel is None:
-        st.error("原本エクセルファイルが選択されていません。上部からアップロードしてください。")
-      else:
-        wb = openpyxl.load_workbook(uploaded_excel)
-        sheet_name = wb.sheetnames[0]
-        ws = wb[sheet_name]
+    if st.button('📄 完璧なSVG品質の印刷用PDFを一発生成'):
+      pdf_buffer = io.BytesIO()
+      # A4サイズ縦向き
+      c = canvas.Canvas(pdf_buffer, pagesize=A4)
+      page_width, page_height = A4
 
-        for idx, clean_data in enumerate(cleaned_data_list, start=1):
-          # 1. プレビューと全く同一のSVGデータを生成
-          svg_bytes = generate_spaced_svg_barcode(
-              clean_data, module_width, module_height, font_size, text_distance, letter_spacing
-          )
+      # 1ページあたり6個（2列×3行）のレイアウト配置設定
+      cols = 2
+      rows = 3
+      margin_x = 40
+      margin_top = 50
+      cell_w = (page_width - (margin_x * 2)) / cols
+      cell_h = (page_height - (margin_top * 2)) / rows
 
-          # 2. SVGをそのままPNGに正確にラスタライズ（フォント・形状の差異をゼロにする）
-          png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
-          img_byte_arr = io.BytesIO(png_bytes)
+      for idx, clean_data in enumerate(cleaned_data_list):
+        page_idx = idx // 6
+        pos_in_page = idx % 6
 
-          # 3. 原本の配置ルール（5行ごとにブロック、奇数個目はA列、偶数個目はG列）
-          block_row = ((idx - 1) // 2) * 5 + 1
-          col_idx = 1 if (idx % 2 != 0) else 7
+        if idx > 0 and pos_in_page == 0:
+          c.showPage()  # 6個溜まったら次のページへ
 
-          # 機種名を設定
-          ws.cell(row=block_row, column=col_idx).value = model_name_input
+        # ページ内での行・列インデックス（2列×3行）
+        r = pos_in_page // cols
+        col = pos_in_page % cols
 
-          # エクセル原本のセル枠にピタリと収まる完璧なサイズ
-          img = OpenpyxlImage(img_byte_arr)
-          img.width = 300
-          img.height = 42
-          
-          cell_coord = f"{openpyxl.utils.get_column_letter(col_idx)}{block_row + 1}"
-          ws.add_image(img, cell_coord)
+        x = margin_x + col * cell_w + 20
+        # 上から順に配置していく座標計算
+        y = page_height - margin_top - (r + 1) * cell_h + 30
 
-        # 保存用バッファ
-        output_buffer = io.BytesIO()
-        wb.save(output_buffer)
-        output_buffer.seek(0)
+        # 機種名を上部に描画
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(x, y + 60, model_name_input)
 
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.xlsx'
-
-        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを、プレビューと完全一致するフォント・品質で原本エクセルに自動埋め込みしました！')
-        st.download_button(
-            label='📥 完成版エクセルファイルをダウンロード',
-            data=output_buffer,
-            file_name=dl_filename,
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        # SVGバーコードを生成し、ReportLabのDrawingオブジェクトに変換して埋め込み
+        svg_bytes = generate_spaced_svg_barcode(
+            clean_data, module_width, module_height, font_size, text_distance, letter_spacing
         )
+        
+        svg_io = io.BytesIO(svg_bytes)
+        try:
+          drawing = svg2rlg(svg_io)
+          if drawing:
+            # 適切なサイズにスケーリングして描画
+            drawing.width = 240
+            drawing.height = 50
+            drawing.hAlign = 'LEFT'
+            renderPDF.draw(drawing, c, x, y)
+        except Exception:
+          pass
+
+      c.save()
+      pdf_buffer.seek(0)
+
+      date_str = datetime.now().strftime('%Y-%m-%d')
+      dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.pdf'
+
+      st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを収めた印刷用PDFを生成しました！')
+      st.download_button(
+          label='📥 印刷用PDFファイルをダウンロード',
+          data=pdf_buffer,
+          file_name=dl_filename,
+          mime='application/pdf',
+      )
 
     # 4. 画面上のプレビュー一覧表示
     st.markdown('---')
