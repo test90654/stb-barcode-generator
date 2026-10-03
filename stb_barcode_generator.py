@@ -17,9 +17,9 @@ st.set_page_config(
     page_title='STBバーコード印刷用PDF自動生成ツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード印刷用PDF自動生成ツール（ベクター品質版）')
+st.title('📦 STBバーコード印刷用PDF自動生成ツール（プレビュー対応版）')
 st.write(
-    'CSVファイルをアップロードすると、プレビューの完璧なSVG品質（美しいフォント・「0」の形状・文字間隔）を100%保ったまま、原本と同じ2×3グリッドのA4印刷用PDFを一発生成します。'
+    'CSVファイルをアップロードすると、プレビューの完璧なSVG品質（美しいフォント・「0」の形状・文字間隔）を100%保ったまま、原本と同じ2×3グリッドのA4印刷用PDFを生成・プレビューできます。'
 )
 
 # 1. CSVファイルのアップロード
@@ -152,76 +152,87 @@ if uploaded_csv is not None:
     return svg_content.encode('utf-8')
 
 
-  # 3. A4印刷用PDF一括生成処理（2×3グリッド構造）
+  # PDF生成ロジックの共通関数
+  def create_barcode_pdf(data_list, model_name):
+    pdf_buffer = io.BytesIO()
+    c = canvas.Canvas(pdf_buffer, pagesize=A4)
+    page_width, page_height = A4
+
+    cols = 2
+    rows = 3
+    margin_x = 40
+    margin_top = 50
+    cell_w = (page_width - (margin_x * 2)) / cols
+    cell_h = (page_height - (margin_top * 2)) / rows
+
+    for idx, clean_data in enumerate(data_list):
+      page_idx = idx // 6
+      pos_in_page = idx % 6
+
+      if idx > 0 and pos_in_page == 0:
+        c.showPage()
+
+      r = pos_in_page // cols
+      col = pos_in_page % cols
+
+      x = margin_x + col * cell_w + 20
+      y = page_height - margin_top - (r + 1) * cell_h + 30
+
+      c.setFont("Helvetica-Bold", 14)
+      c.drawString(x, y + 60, model_name)
+
+      svg_bytes = generate_spaced_svg_barcode(
+          clean_data, module_width, module_height, font_size, text_distance, letter_spacing
+      )
+      
+      svg_io = io.BytesIO(svg_bytes)
+      try:
+        drawing = svg2rlg(svg_io)
+        if drawing:
+          drawing.width = 240
+          drawing.height = 50
+          drawing.hAlign = 'LEFT'
+          renderPDF.draw(drawing, c, x, y)
+      except Exception:
+        pass
+
+    c.save()
+    pdf_buffer.seek(0)
+    return pdf_buffer
+
+
+  # 3. A4印刷用PDF生成・プレビュー処理
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📄 完璧なSVG品質の印刷用PDFを一発生成'):
-      pdf_buffer = io.BytesIO()
-      # A4サイズ縦向き
-      c = canvas.Canvas(pdf_buffer, pagesize=A4)
-      page_width, page_height = A4
+    if st.button('📄 印刷用PDFを生成・プレビューする'):
+      pdf_buffer = create_barcode_pdf(cleaned_data_list, model_name_input)
+      
+      # セッションステートに保存してブラウザプレビューを維持
+      st.session_state['pdf_buffer'] = pdf_buffer.getvalue()
+      st.session_state['model_name'] = model_name_input
 
-      # 1ページあたり6個（2列×3行）のレイアウト配置設定
-      cols = 2
-      rows = 3
-      margin_x = 40
-      margin_top = 50
-      cell_w = (page_width - (margin_x * 2)) / cols
-      cell_h = (page_height - (margin_top * 2)) / rows
-
-      for idx, clean_data in enumerate(cleaned_data_list):
-        page_idx = idx // 6
-        pos_in_page = idx % 6
-
-        if idx > 0 and pos_in_page == 0:
-          c.showPage()  # 6個溜まったら次のページへ
-
-        # ページ内での行・列インデックス（2列×3行）
-        r = pos_in_page // cols
-        col = pos_in_page % cols
-
-        x = margin_x + col * cell_w + 20
-        # 上から順に配置していく座標計算
-        y = page_height - margin_top - (r + 1) * cell_h + 30
-
-        # 機種名を上部に描画
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x, y + 60, model_name_input)
-
-        # SVGバーコードを生成し、ReportLabのDrawingオブジェクトに変換して埋め込み
-        svg_bytes = generate_spaced_svg_barcode(
-            clean_data, module_width, module_height, font_size, text_distance, letter_spacing
-        )
-        
-        svg_io = io.BytesIO(svg_bytes)
-        try:
-          drawing = svg2rlg(svg_io)
-          if drawing:
-            # 適切なサイズにスケーリングして描画
-            drawing.width = 240
-            drawing.height = 50
-            drawing.hAlign = 'LEFT'
-            renderPDF.draw(drawing, c, x, y)
-        except Exception:
-          pass
-
-      c.save()
-      pdf_buffer.seek(0)
+    # PDFが生成されている場合はブラウザ内でプレビュー表示
+    if 'pdf_buffer' in st.session_state:
+      st.success('✨ 印刷用PDFの準備ができました！以下のプレビューをご確認ください。')
+      
+      # PDFを画面上に埋め込み表示するためのデータURI作成
+      base64_pdf = base64.b64encode(st.session_state['pdf_buffer']).decode('utf-8')
+      pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="1000" height="700" type="application/pdf"></iframe>'
+      st.markdown(pdf_display, unsafe_allow_html=True)
 
       date_str = datetime.now().strftime('%Y-%m-%d')
-      dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.pdf'
+      dl_filename = f'STB_Barcodes_{st.session_state["model_name"]}_{date_str}.pdf'
 
-      st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを収めた印刷用PDFを生成しました！')
       st.download_button(
-          label='📥 印刷用PDFファイルをダウンロード',
-          data=pdf_buffer,
+          label='📥 完成版PDFファイルをダウンロード',
+          data=st.session_state['pdf_buffer'],
           file_name=dl_filename,
           mime='application/pdf',
       )
 
-    # 4. 画面上のプレビュー一覧表示
+    # 4. 個別バーコード一覧プレビュー
     st.markdown('---')
-    st.subheader('👀 バーコード一覧プレビュー')
+    st.subheader('👀 各バーコードの個別確認')
 
     for i, clean_data in enumerate(cleaned_data_list, start=1):
       try:
