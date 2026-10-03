@@ -7,7 +7,7 @@ import barcode
 from barcode.writer import ImageWriter
 import pandas as pd
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # ReportLab imports for precise PDF generation
 from reportlab.lib.pagesizes import A4
@@ -205,21 +205,17 @@ if uploaded_file is not None:
     if st.button('📦 6個セットラベルシートPDFを一括生成・ダウンロード'):
       pdf_buffer = io.BytesIO()
       
-      # ReportLabでA4縦のキャンバスを作成
       c = canvas.Canvas(pdf_buffer, pagesize=A4)
-      page_width, page_height = A4  # points (1 pt = 1/72 inch)
+      page_width, page_height = A4
 
-      # 1ページあたりのグリッド設定 (縦2行 × 横3列 = 6個)
       cols = 3
       rows = 2
       
-      # マージンと配置サイズ (エクセル表現を参考に調整しやすいよう設定)
       margin_left = 30 * mm
       margin_top = 30 * mm
       col_gap = 15 * mm
       row_gap = 20 * mm
 
-      # 1個あたりの印刷サイズ（幅×高さ）mm指定
       cell_w = 50 * mm
       cell_h = 25 * mm
 
@@ -227,34 +223,27 @@ if uploaded_file is not None:
       current_item_count = 0
 
       for i, clean_data in enumerate(cleaned_data_list, start=1):
-        # 1個分のPIL画像を生成
         pil_img = generate_single_barcode_pil(
             clean_data, model_name_input, module_width, module_height, font_scale, text_distance
         )
 
-        # 一時ファイルとして保存してReportLabに読み込ませる
         temp_img_path = f"temp_bc_{i}.png"
         pil_img.save(temp_img_path, format="PNG")
 
-        # ページ内のインデックス (0から5)
         slot_idx = current_item_count % items_per_page
-        r = slot_idx // cols  # 行 (0 or 1)
-        c_idx = slot_idx % cols  # 列 (0, 1, 2)
+        r = slot_idx // cols
+        c_idx = slot_idx % cols
 
-        # 座標計算 (PDFの原点は左下なので、上からのオフセットを考慮)
         x = margin_left + c_idx * (cell_w + col_gap)
         y = page_height - margin_top - (r + 1) * cell_h - r * row_gap
 
-        # PDFに画像を配置
         c.drawImage(temp_img_path, x, y, width=cell_w, height=cell_h, preserveAspectRatio=True, mask='auto')
 
         current_item_count += 1
 
-        # 一時ファイルを削除
         if os.path.exists(temp_img_path):
           os.remove(temp_img_path)
 
-        # 6個配置し終わったら（または最後のデータだったら）ページを確定
         if current_item_count % items_per_page == 0 or i == len(cleaned_data_list):
           c.showPage()
 
