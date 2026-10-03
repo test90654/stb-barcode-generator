@@ -5,21 +5,21 @@ import re
 import zipfile
 import base64
 import barcode
-from barcode.writer import SVGWriter, ImageWriter
+from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
 import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
-from PIL import Image as PILImage
+import cairosvg
 
 st.set_page_config(
     page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール（ベース完全準拠版）')
+st.title('📦 STBバーコード原本自動埋め込みツール（フォント完全一致版）')
 st.write(
-    'CSVファイルと原本エクセルファイルをアップロードすると、あの完璧なSVG品質のバーコードを原本のセル枠にピタリと収まるサイズで自動埋め込みします。'
+    'CSVファイルと原本エクセルファイルをアップロードすると、プレビューと全く同じSVG品質・フォントのバーコードを原本のセル枠にピタリと自動埋め込みします。'
 )
 
 # 1. ファイルのアップロード（CSV ＆ 原本エクセル）
@@ -119,7 +119,7 @@ if uploaded_csv is not None:
   )
 
 
-  # ご提示いただいたベースのSVG生成関数
+  # プレビューとエクセルで100%同一のSVGを生成する関数
   def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -157,7 +157,7 @@ if uploaded_csv is not None:
     return svg_content.encode('utf-8')
 
 
-  # 3. エクセル一括生成処理
+  # 3. エクセル一括生成処理（SVGをそのままcairosvgで高品質PNG化してエクセルに埋め込み）
   st.markdown('---')
   if cleaned_data_list:
     if st.button('📦 原本エクセルにバーコードを自動埋め込んで生成'):
@@ -169,28 +169,14 @@ if uploaded_csv is not None:
         ws = wb[sheet_name]
 
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
-          # 1. ベースと同じSVG生成ロジックを使用
+          # 1. プレビューと全く同一のSVGデータを生成
           svg_bytes = generate_spaced_svg_barcode(
               clean_data, module_width, module_height, font_size, text_distance, letter_spacing
           )
 
-          # 2. openpyxlが安全にセルに貼り付けられるよう、ImageWriterベースで同等の見た目・設定で画像を生成
-          code39 = barcode.get_barcode_class('code39')
-          barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
-          
-          img_io = io.BytesIO()
-          barcode_instance.write(
-              img_io,
-              options={
-                  'module_width': module_width,
-                  'module_height': module_height,
-                  'font_size': font_size,
-                  'text_distance': text_distance,
-                  'quiet_zone': 6.5,
-                  'write_text': True,
-              },
-          )
-          img_io.seek(0)
+          # 2. SVGをそのままPNGに正確にラスタライズ（フォント・形状の差異をゼロにする）
+          png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
+          img_byte_arr = io.BytesIO(png_bytes)
 
           # 3. 原本の配置ルール（5行ごとにブロック、奇数個目はA列、偶数個目はG列）
           block_row = ((idx - 1) // 2) * 5 + 1
@@ -200,7 +186,7 @@ if uploaded_csv is not None:
           ws.cell(row=block_row, column=col_idx).value = model_name_input
 
           # エクセル原本のセル枠にピタリと収まる完璧なサイズ
-          img = OpenpyxlImage(img_io)
+          img = OpenpyxlImage(img_byte_arr)
           img.width = 300
           img.height = 42
           
@@ -215,7 +201,7 @@ if uploaded_csv is not None:
         date_str = datetime.now().strftime('%Y-%m-%d')
         dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.xlsx'
 
-        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを原本エクセルに自動埋め込みしました！')
+        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを、プレビューと完全一致するフォント・品質で原本エクセルに自動埋め込みしました！')
         st.download_button(
             label='📥 完成版エクセルファイルをダウンロード',
             data=output_buffer,
@@ -223,7 +209,7 @@ if uploaded_csv is not None:
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    # 4. 画面上のプレビュー一覧表示（ご提示いただいたベースの完璧なSVG表示）
+    # 4. 画面上のプレビュー一覧表示
     st.markdown('---')
     st.subheader('👀 バーコード一覧プレビュー')
 
