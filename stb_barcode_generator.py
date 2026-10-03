@@ -14,9 +14,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（機種名対応・安定版）')
+st.title('📦 STBバーコード生成・プレビューツール（機種名確実表示版）')
 st.write(
-    'CSVファイル名から機種名を自動抽出してバーコード上部に左揃えで表示します。まずはここから動作を確認します。'
+    'CSVファイル名から機種名を自動抽出し、バーコード上部に左揃えで確実に表示します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -111,7 +111,7 @@ if uploaded_file is not None:
     )
 
 
-  # 機種名を上部に左揃えで安全に追加するSVG生成関数（1個版）
+  # 機種名を上部に左揃えで確実に描画するSVG生成関数
   def generate_single_svg_with_model(clean_data, model_name, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -143,34 +143,31 @@ if uploaded_file is not None:
           new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
           elem.set('style', new_style)
 
-      # 元のSVGのサイズを取得して拡張
-      orig_w = float(root.get('width', '200').replace('px', ''))
+      # 既存のバーコード要素全体を下に移動させるため、すべてを1つの <g> で包む
       orig_h = float(root.get('height', '50').replace('px', ''))
-
-      header_height = 20
+      header_height = 22  # 機種名用の余白
       new_h = orig_h + header_height
 
       root.set('height', f'{new_h}px')
-      root.set('viewBox', f'0 0 {orig_w} {new_h}')
+      root.set('viewBox', f'0 0 {float(root.get("width", "200").replace("px", ""))} {new_h}')
 
-      # バーコード全体の要素を下へ移動するためのグループを作成
-      g_wrapper = ET.Element('g')
-      g_wrapper.set('transform', f'translate(0, {header_height})')
-      
-      for child in list(root):
-        if child.tag.endswith('rect') and child.get('fill') != 'none':
-          # 背景の白rectは親全体に適用するためそのまま残すか調整
-          pass
+      # 既存の子要素を一旦すべて退避
+      children = list(root)
+      for child in children:
         root.remove(child)
-        g_wrapper.append(child)
-      
-      root.append(g_wrapper)
 
-      # 機種名テキストを左上に追加
+      # バーコード部分全体を下にシフトするグループを作成
+      g_barcode = ET.Element('g')
+      g_barcode.set('transform', f'translate(0, {header_height})')
+      for child in children:
+        g_barcode.append(child)
+      root.append(g_barcode)
+
+      # 機種名テキスト要素をルートの先頭（最前面）に追加
       if model_name:
         model_text = ET.Element('text')
-        model_text.set('x', '10')
-        model_text.set('y', '14')
+        model_text.set('x', '10')  # 左揃え（左マージン10px）
+        model_text.set('y', '15')  # 上部位置
         model_text.set('style', 'font-family: Arial, sans-serif; font-size: 11px; font-weight: bold; fill: black;')
         model_text.text = model_name
         root.append(model_text)
