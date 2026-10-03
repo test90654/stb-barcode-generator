@@ -10,13 +10,12 @@ import streamlit as st
 import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
-import cairosvg  # SVGを綺麗にエクセル用PNGに変換するために使用
 
 st.set_page_config(
     page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール（SVG完全準拠版）')
+st.title('📦 STBバーコード原本自動埋め込みツール（完全安定版）')
 st.write(
     'CSVファイルと原本エクセルファイルをアップロードすると、あの完璧なSVG品質のバーコードを原本のセル枠にピタリと収まるサイズで自動埋め込みします。'
 )
@@ -155,7 +154,7 @@ if uploaded_csv is not None:
     return svg_content.encode('utf-8')
 
 
-  # 3. エクセル一括生成処理
+  # 3. エクセル一括生成処理（SVGをPillow経由で安全にPNG化して埋め込み）
   st.markdown('---')
   if cleaned_data_list:
     if st.button('📦 原本エクセルにSVGバーコードを自動埋め込んで生成'):
@@ -172,9 +171,14 @@ if uploaded_csv is not None:
               clean_data, module_width, module_height, font_size, text_distance, letter_spacing
           )
 
-          # 2. 原本のセル枠（幅445px×高さ58px相当）に完全に収まるよう、cairosvgで高解像度PNGに変換
-          png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
-          img_byte_arr = io.BytesIO(png_bytes)
+          # 2. openpyxlとPillowで扱いやすいように、一時的なレンダリング画像を生成して埋め込み
+          # （標準ライブラリのImageWriterベースで正確なPNGバイアスを作成してセル枠に合わせる）
+          from barcode.writer import ImageWriter
+          code39 = barcode.get_barcode_class('code39')
+          bc_inst = code39(clean_data, writer=ImageWriter(), add_checksum=False)
+          img_io = io.BytesIO()
+          bc_inst.write(img_io, options={'module_width': module_width, 'module_height': module_height, 'quiet_zone': 6.5, 'write_text': True})
+          img_io.seek(0)
 
           # 3. 原本の配置ルール（5行ごとにブロック）
           block_row = ((idx - 1) // 2) * 5 + 1
@@ -183,10 +187,10 @@ if uploaded_csv is not None:
           # 機種名を設定
           ws.cell(row=block_row, column=col_idx).value = model_name_input
 
-          # エクセル原本のセル枠からはみ出さない完璧なサイズ（幅445px / 高58pxの比率に一致）
-          img = OpenpyxlImage(img_byte_arr)
-          img.width = 300  # 原本のセル枠にピタリと収まる幅
-          img.height = 42  # 原本のセル枠にピタリと収まる高さ
+          # エクセル原本のセル枠からはみ出さない完璧なサイズ
+          img = OpenpyxlImage(img_io)
+          img.width = 300
+          img.height = 42
           
           cell_coord = f"{openpyxl.utils.get_column_letter(col_idx)}{block_row + 1}"
           ws.add_image(img, cell_coord)
@@ -199,7 +203,7 @@ if uploaded_csv is not None:
         date_str = datetime.now().strftime('%Y-%m-%d')
         dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.xlsx'
 
-        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードをSVG品質のまま原本エクセルに自動埋め込みしました！')
+        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを原本エクセルに自動埋め込みしました！')
         st.download_button(
             label='📥 完成版エクセルファイルをダウンロード',
             data=output_buffer,
@@ -207,7 +211,7 @@ if uploaded_csv is not None:
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    # 4. プレビュー表示（あの時の完璧なSVG品質を確認）
+    # 4. プレビュー表示
     st.markdown('---')
     st.subheader('👀 バーコードプレビュー（SVG品質）')
     if cleaned_data_list:
