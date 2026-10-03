@@ -17,17 +17,22 @@ st.set_page_config(
 
 st.title('📦 STBバーコード原本自動埋め込みツール')
 st.write(
-    'CSVをアップロードすると、ファイル名から機種名を自動抽出し、原本エクセルのレイアウトにバーコードを自動配置した印刷用エクセルファイルを生成します。'
+    'CSVファイルと原本エクセルファイルをそれぞれアップロードすると、原本のレイアウトにバーコードを自動配置した完成版エクセルファイルを生成します。'
 )
 
-# 1. CSVファイルのアップロード
-uploaded_file = st.file_uploader(
-    'STBリストのCSVファイルを選択してください', type=['csv']
+# 1. ファイルのアップロード（CSV ＆ 原本エクセル）
+st.subheader('📁 ファイルのアップロード')
+uploaded_csv = st.file_uploader(
+    '1. STBリストのCSVファイルを選択してください', type=['csv']
 )
 
-if uploaded_file is not None:
+uploaded_excel = st.file_uploader(
+    '2. 原本エクセルファイル（例: STBﾊﾞｰｺｰﾄﾞ(620PW)原本.xlsx）を選択してください', type=['xlsx']
+)
+
+if uploaded_csv is not None:
   # ファイル名から機種名を自動抽出（例: "TZ-LS200P49台.csv" -> "TZ-LS200P"）
-  filename_raw = uploaded_file.name
+  filename_raw = uploaded_csv.name
   extracted_model = "TZ-MODEL"
   
   match = re.match(r"^(.+?)(?:\d+台|\d+件|\.csv)", filename_raw)
@@ -39,7 +44,7 @@ if uploaded_file is not None:
     if not extracted_model:
       extracted_model = os.path.splitext(filename_raw)[0]
 
-  df = pd.read_csv(uploaded_file, header=None)
+  df = pd.read_csv(uploaded_csv, header=None)
   target_column = df.columns[0]
 
   # データの抽出と指数表記の自動修復
@@ -159,20 +164,15 @@ if uploaded_file is not None:
   st.markdown('---')
   if cleaned_data_list:
     if st.button('📦 原本エクセルにバーコードを自動埋め込んで生成'):
-      template_path = "STBﾊﾞｰｺｰﾄﾞ(620PW)原本.xlsx"
-      
-      if not os.path.exists(template_path):
-        st.error(f"原本ファイル '{template_path}' が見つかりません。同じフォルダに配置してください。")
+      if uploaded_excel is None:
+        st.error("原本エクセルファイルが選択されていません。上部からアップロードしてください。")
       else:
-        wb = openpyxl.load_workbook(template_path)
+        # アップロードされたエクセルを読み込み
+        wb = openpyxl.load_workbook(uploaded_excel)
         sheet_name = wb.sheetnames[0]
         ws = wb[sheet_name]
 
-        # 原本のセル配置ルールに基づいてバーコードを埋め込む
-        # 原本では5行おき（row 1, 6, 11...）に機種名があり、その下に画像が配置される構造
-        # ここではcleaned_data_listの件数分、順番にセルへ機種名と画像をセットしていく
-        
-        # サンプルとして、全データを順次セルに配置していくロジック
+        # 原本の配置ルールに基づいてバーコードを埋め込む
         current_row = 1
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
           # 1個分のバーコード画像を生成
@@ -180,10 +180,9 @@ if uploaded_file is not None:
           temp_img_path = f"temp_gen_{idx}.png"
           pil_img.save(temp_img_path, format="PNG")
 
-          # エクセル上の配置位置を計算（原本の構造に合わせて配置）
-          # 例: 5行ごとにブロックが繰り返される場合
-          block_row = ((idx - 1) // 2) * 5 + 1  # 2列構成などの場合に対応
-          col_idx = 1 if (idx % 2 != 0) else 7  # A列かG列かなど
+          # 5行ごとにブロックが繰り返される構造に対応
+          block_row = ((idx - 1) // 2) * 5 + 1
+          col_idx = 1 if (idx % 2 != 0) else 7
 
           # セルに機種名を設定
           ws.cell(row=block_row, column=col_idx).value = model_name_input
