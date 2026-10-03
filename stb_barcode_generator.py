@@ -3,20 +3,25 @@ import io
 import os
 import re
 import zipfile
-import base64
 import barcode
-from barcode.writer import SVGWriter
+from barcode.writer import ImageWriter
 import pandas as pd
 import streamlit as st
-import xml.etree.ElementTree as ET
+from PIL import Image
+
+# ReportLab imports for precise PDF generation
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
 
 st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（安全・機種名表示版）')
+st.title('📦 STBバーコード生成・プレビューツール（印刷用PDF・6個セット版）')
 st.write(
-    'CSVファイル名から機種名を自動抽出し、XML構造を崩さずにバーコード上部に左揃えで表示します。'
+    'CSVファイルをアップロードすると、エクセルへの貼り付け不要でそのまま印刷できる「6個セット（縦2×横3）ラベルシートPDF」を一括生成します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -61,7 +66,7 @@ if uploaded_file is not None:
       f'✨ CSVから **{len(cleaned_data_list)}件** のデータを読み込みました！（自動抽出された機種名: **{extracted_model}**）'
   )
 
-  # 2. バーコードの設定項目 ＆ 機種名の編集
+  # 2. 設定項目
   st.subheader('⚙️ バーコード・ラベル設定')
   
   model_name_input = st.text_input(
@@ -79,18 +84,18 @@ if uploaded_file is not None:
         value=9.0,
         step=1.0,
     )
-    font_size = st.slider(
-        '文字の大きさ (font_size)',
-        min_value=8,
-        max_value=24,
-        value=12,
-        step=1,
+    font_scale = st.slider(
+        '文字の大きさスケール',
+        min_value=0.8,
+        max_value=1.5,
+        value=1.1,
+        step=0.05,
     )
 
   with col2:
     text_distance = st.slider(
-        '文字とバーの距離 (text_distance)',
-        min_value=1.0,
+        '文字とバーの距離',
+        min_value=2.0,
         max_value=20.0,
         value=5.0,
         step=1.0,
@@ -102,138 +107,177 @@ if uploaded_file is not None:
         value=0.4,
         step=0.05,
     )
-    letter_spacing = st.slider(
-        '文字の間隔 (letter_spacing)',
-        min_value=1.0,
-        max_value=30.0,
-        value=12.0,
-        step=1.0,
-    )
 
 
-  # 安全なXMLパース処理で機種名と文字間隔を組み込む関数
-  def generate_safe_svg_with_model(clean_data, model_name, module_width, module_height, font_size, text_distance, spacing):
+  # フォント取得関数
+  def get_proper_font(size):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    custom_font = os.path.join(current_dir, 'arial.ttf')
+    font_paths = [
+        custom_font,
+        'C:/Windows/Fonts/meiryo.ttc',
+        'C:/Windows/Fonts/YuGothM.ttc',
+        'C:/Windows/Fonts/arial.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/Library/Fonts/Arial.ttf'
+    ]
+    for path in font_paths:
+      if os.path.exists(path):
+        try:
+          return ImageFont.truetype(path, size=int(size))
+        except Exception:
+          continue
+    return ImageFont.load_default()
+
+
+  # 1個分のバーコード画像（機種名ヘッダー付き）をPIL Imageとして生成する関数
+  def generate_single_barcode_pil(clean_data, model_name, module_width, module_height, font_scale, text_distance):
     code39 = barcode.get_barcode_class('code39')
-    barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
+    barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
     options = {
         'module_width': module_width,
         'module_height': module_height,
-        'font_size': font_size,
-        'text_distance': text_distance,
         'quiet_zone': 6.5,
-        'write_text': True,
+        'write_text': False,
     }
 
-    spaced_text = ' '.join(list(clean_data))
-    barcode_instance.default_text = f'* {spaced_text} *'
+    rv = io.BytesIO()
+    barcode_instance.write(rv, options=options)
+    rv.seek(0)
 
-    svg_io = io.BytesIO()
-    barcode_instance.write(svg_io, options=options)
-    svg_content = svg_io.getvalue().decode('utf-8')
+    barcode_img = Image.open(rv).convert('RGB')
+    bc_width, bc_height = barcode_img.size
 
+    display_text = f"* {' '.join(list(clean_data))} *"
+
+    # フォントサイズ計算
+    optimal_font_size = int((bc_width / (len(display_text) * 1.5)) * font_scale)
+    optimal_font_size = max(12, optimal_font_size)
+    font = get_proper_font(optimal_font_size)
+
+    dummy_draw = ImageDraw.Draw(barcode_img)
     try:
-      # ネームスペースを登録してXMLとして正しく解析
-      ET.register_namespace('', 'http://www.w3.org/2000/svg')
-      root = ET.fromstring(svg_content)
-      
-      # 1. 文字間隔の最適化
-      for elem in root.iter():
-        if elem.tag.endswith('text'):
-          existing_style = elem.get('style', '')
-          if 'letter-spacing' not in existing_style:
-            new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
-            elem.set('style', new_style)
+      char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
+    except AttributeError:
+      char_widths = [font.getlength(char) for char in display_text]
 
-      # 2. 元のSVGの幅と高さを取得
-      orig_w_str = root.get('width', '200').replace('px', '')
-      orig_h_str = root.get('height', '50').replace('px', '')
-      orig_w = float(orig_w_str)
-      orig_h = float(orig_h_str)
+    sum_widths = sum(char_widths)
+    left_margin = int(bc_width * 0.04)
+    right_margin = int(bc_width * 0.04)
+    available_width = bc_width - (left_margin + right_margin)
 
-      header_height = 22  # 機種名用の余白
-      new_h = orig_h + header_height
+    if len(display_text) > 1:
+      spacing = max(1, (available_width - sum_widths) / (len(display_text) - 1))
+    else:
+      spacing = 0
 
-      # SVG全体の高さを拡張
-      root.set('height', f'{new_h}px')
-      root.set('viewBox', f'0 0 {orig_w} {new_h}')
+    # 機種名用ヘッダー高さ ＋ バーコード ＋ 下部テキスト
+    header_height = int(optimal_font_size * 1.5)
+    padding_bottom = int(optimal_font_size * 1.3 + text_distance)
+    
+    total_h = bc_height + padding_bottom + header_height
+    final_img = Image.new('RGB', (bc_width, total_h), 'white')
 
-      # 3. 既存のすべての要素（バーコードや背景）を下の位置にシフトさせるグループを作成
-      g_content = ET.Element('{http://www.w3.org/2000/svg}g')
-      g_content.set('transform', f'translate(0, {header_height})')
-      
-      # root直下の子要素を一度退避してグループに移す
-      children = list(root)
-      for child in children:
-        root.remove(child)
-        g_content.append(child)
-      
-      root.append(g_content)
+    # 機種名（左揃え）を描画
+    draw = ImageDraw.Draw(final_img)
+    model_font_size = max(10, int(optimal_font_size * 0.9))
+    model_font = get_proper_font(model_font_size)
+    draw.text((left_margin, 2), model_name, fill='black', font=model_font)
 
-      # 4. 最上部に機種名テキストを左揃えで追加
-      if model_name:
-        model_text = ET.Element('{http://www.w3.org/2000/svg}text')
-        model_text.set('x', '10')
-        model_text.set('y', '15')
-        model_text.set('style', 'font-family: Arial, sans-serif; font-size: 11px; font-weight: bold; fill: black;')
-        model_text.text = model_name
-        root.append(model_text)
+    # バーコード画像を貼り付け（下へずらす）
+    final_img.paste(barcode_img, (0, header_height))
 
-      svg_content = ET.tostring(root, encoding='utf-8').decode('utf-8')
-    except Exception:
-      pass
+    # 下部テキストを描画
+    text_y = header_height + bc_height + text_distance
+    current_x = left_margin
+    for idx, char in enumerate(display_text):
+      for dx in [0, 1]:  # 疑似ボールド
+        draw.text((current_x + dx, text_y), char, fill='black', font=font)
+      current_x += char_widths[idx] + spacing
 
-    return svg_content.encode('utf-8')
+    return final_img
 
 
-  # 3. 一括ZIPダウンロードボタン
+  # 3. 6個セット（縦2行×横3列）のPDF一括生成処理
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 すべてのバーコードをSVG形式でZIP一括ダウンロード'):
-      zip_buffer = io.BytesIO()
-      success_count = 0
+    if st.button('📦 6個セットラベルシートPDFを一括生成・ダウンロード'):
+      pdf_buffer = io.BytesIO()
+      
+      # ReportLabでA4縦のキャンバスを作成
+      c = canvas.Canvas(pdf_buffer, pagesize=A4)
+      page_width, page_height = A4  # points (1 pt = 1/72 inch)
 
-      with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for i, clean_data in enumerate(cleaned_data_list, start=1):
-          try:
-            svg_bytes = generate_safe_svg_with_model(
-                clean_data, model_name_input, module_width, module_height, font_size, text_distance, letter_spacing
-            )
-            filename = f'{i:03d}_stb_barcode_{clean_data}.svg'
-            zip_file.writestr(filename, svg_bytes)
-            success_count += 1
-          except Exception:
-            pass
+      # 1ページあたりのグリッド設定 (縦2行 × 横3列 = 6個)
+      cols = 3
+      rows = 2
+      
+      # マージンと配置サイズ (エクセル表現を参考に調整しやすいよう設定)
+      margin_left = 30 * mm
+      margin_top = 30 * mm
+      col_gap = 15 * mm
+      row_gap = 20 * mm
 
-      if success_count > 0:
-        current_date_str = datetime.now().strftime('%Y-%m-%d')
-        download_filename = f'stb_barcodes_svg_{current_date_str}.zip'
+      # 1個あたりの印刷サイズ（幅×高さ）mm指定
+      cell_w = 50 * mm
+      cell_h = 25 * mm
 
-        st.success(f'✨ {success_count}件のSVGバーコードZIP作成が完了しました！')
-        zip_buffer.seek(0)
-        st.download_button(
-            label='📥 SVGバーコードZIPをダウンロード',
-            data=zip_buffer,
-            file_name=download_filename,
-            mime='application/zip',
+      items_per_page = cols * rows
+      current_item_count = 0
+
+      for i, clean_data in enumerate(cleaned_data_list, start=1):
+        # 1個分のPIL画像を生成
+        pil_img = generate_single_barcode_pil(
+            clean_data, model_name_input, module_width, module_height, font_scale, text_distance
         )
 
-    # 4. 画面上のプレビュー一覧表示
+        # 一時ファイルとして保存してReportLabに読み込ませる
+        temp_img_path = f"temp_bc_{i}.png"
+        pil_img.save(temp_img_path, format="PNG")
+
+        # ページ内のインデックス (0から5)
+        slot_idx = current_item_count % items_per_page
+        r = slot_idx // cols  # 行 (0 or 1)
+        c_idx = slot_idx % cols  # 列 (0, 1, 2)
+
+        # 座標計算 (PDFの原点は左下なので、上からのオフセットを考慮)
+        x = margin_left + c_idx * (cell_w + col_gap)
+        y = page_height - margin_top - (r + 1) * cell_h - r * row_gap
+
+        # PDFに画像を配置
+        c.drawImage(temp_img_path, x, y, width=cell_w, height=cell_h, preserveAspectRatio=True, mask='auto')
+
+        current_item_count += 1
+
+        # 一時ファイルを削除
+        if os.path.exists(temp_img_path):
+          os.remove(temp_img_path)
+
+        # 6個配置し終わったら（または最後のデータだったら）ページを確定
+        if current_item_count % items_per_page == 0 or i == len(cleaned_data_list):
+          c.showPage()
+
+      c.save()
+      pdf_buffer.seek(0)
+
+      current_date_str = datetime.now().strftime('%Y-%m-%d')
+      download_filename = f'stb_barcodes_grid6_{current_date_str}.pdf'
+
+      st.success(f'✨ 全 **{len(cleaned_data_list)}件** のバーコードを6個セット（縦2×横3）のPDFシートにまとめました！')
+      st.download_button(
+          label='📥 印刷用ラベルシートPDFをダウンロード',
+          data=pdf_buffer,
+          file_name=download_filename,
+          mime='application/pdf',
+      )
+
+    # 4. 画面上のプレビュー表示（1個目のサンプル）
     st.markdown('---')
-    st.subheader('👀 バーコード一覧プレビュー（機種名入り・安全版）')
-
-    for i, clean_data in enumerate(cleaned_data_list, start=1):
-      try:
-        svg_bytes = generate_safe_svg_with_model(
-            clean_data, model_name_input, module_width, module_height, font_size, text_distance, letter_spacing
-        )
-        spaced_text = ' '.join(list(clean_data))
-
-        st.markdown(f'**[{i:03d}] Code: *{spaced_text}***')
-        
-        b64 = base64.b64encode(svg_bytes).decode('utf-8')
-        svg_data_url = f'data:image/svg+xml;base64,{b64}'
-        st.image(svg_data_url, use_container_width=True)
-
-      except Exception as e:
-        st.error(f'プレビュー生成エラー ({clean_data}): {e}')
+    st.subheader('👀 ラベルプレビュー（1個あたりの見本）')
+    if cleaned_data_list:
+      sample_data = cleaned_data_list[0]
+      sample_pil = generate_single_barcode_pil(
+          sample_data, model_name_input, module_width, module_height, font_scale, text_distance
+      )
+      st.image(sample_pil, caption=f'見本コード: *{sample_data}* (機種名: {model_name_input})')
