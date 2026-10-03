@@ -8,15 +8,14 @@ import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
-import xml.etree.ElementTree as ET
 
 st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（機種名確実表示版）')
+st.title('📦 STBバーコード生成・プレビューツール（機種名表示・確実版）')
 st.write(
-    'CSVファイル名から機種名を自動抽出し、バーコード上部に左揃えで確実に表示します。'
+    'CSVファイル名から機種名を自動抽出し、バーコード上部に左揃えで表示します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -62,7 +61,7 @@ if uploaded_file is not None:
   )
 
   # 2. バーコードの設定項目 ＆ 機種名の編集
-  st.subheader('⚙️ バーコード・ラベル設定')
+  st.subheader('⚙️️ バーコード・ラベル設定')
   
   model_name_input = st.text_input(
       'バーコード上に表示する機種名（自動抽出・編集可能）',
@@ -111,7 +110,7 @@ if uploaded_file is not None:
     )
 
 
-  # 機種名を上部に左揃えで確実に描画するSVG生成関数
+  # SVGを生成し、機種名と文字間隔を確実に埋め込む関数
   def generate_single_svg_with_model(clean_data, model_name, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
     barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
@@ -133,46 +132,30 @@ if uploaded_file is not None:
     svg_content = svg_io.getvalue().decode('utf-8')
 
     try:
-      ET.register_namespace('', 'http://www.w3.org/2000/svg')
-      root = ET.fromstring(svg_content)
-      
-      # 文字間隔の最適化
-      for elem in root.iter():
-        if elem.tag.endswith('text'):
-          existing_style = elem.get('style', '')
-          new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
-          elem.set('style', new_style)
+      # 1. 元のSVGの高さ（height="XX"）の数値部分を抽出して、機種名分の高さ（+22px）を足して書き換える
+      height_match = re.search(r'height="([\d\.]+)(?:px)?"', svg_content)
+      if height_match:
+        orig_h = float(height_match.group(1))
+        new_h = orig_h + 22
+        svg_content = svg_content.replace(f'height="{height_match.group(1)}"', f'height="{new_h}"')
+        # viewBoxも同様に拡張
+        viewbox_match = re.search(r'viewBox="0 0 ([\d\.]+) ([\d\.]+)"', svg_content)
+        if viewbox_match:
+          orig_w = viewbox_match.group(1)
+          svg_content = svg_content.replace(viewbox_match.group(0), f'viewBox="0 0 {orig_w} {new_h}"')
 
-      # 既存のバーコード要素全体を下に移動させるため、すべてを1つの <g> で包む
-      orig_h = float(root.get('height', '50').replace('px', ''))
-      header_height = 22  # 機種名用の余白
-      new_h = orig_h + header_height
+      # 2. バーコード全体（rect以外のグループなど）を下に22px移動させるためのグループ変換を挿入
+      # <g id="barcode"> 等で囲むか、あるいは直下の要素にtransformを適用
+      svg_content = svg_content.replace('<g id="black_bars"', '<g transform="translate(0, 22)" id="black_bars"')
 
-      root.set('height', f'{new_h}px')
-      root.set('viewBox', f'0 0 {float(root.get("width", "200").replace("px", ""))} {new_h}')
+      # 3. 各種テキストの letter-spacing を付与
+      svg_content = svg_content.replace('<text ', f'<text style="letter-spacing: {spacing}px;" ')
 
-      # 既存の子要素を一旦すべて退避
-      children = list(root)
-      for child in children:
-        root.remove(child)
-
-      # バーコード部分全体を下にシフトするグループを作成
-      g_barcode = ET.Element('g')
-      g_barcode.set('transform', f'translate(0, {header_height})')
-      for child in children:
-        g_barcode.append(child)
-      root.append(g_barcode)
-
-      # 機種名テキスト要素をルートの先頭（最前面）に追加
+      # 4. 最上部に機種名テキストを挿入（</svg> の直前に追加）
       if model_name:
-        model_text = ET.Element('text')
-        model_text.set('x', '10')  # 左揃え（左マージン10px）
-        model_text.set('y', '15')  # 上部位置
-        model_text.set('style', 'font-family: Arial, sans-serif; font-size: 11px; font-weight: bold; fill: black;')
-        model_text.text = model_name
-        root.append(model_text)
+        model_svg_tag = f'<text x="10" y="15" style="font-family: Arial, sans-serif; font-size: 11px; font-weight: bold; fill: black;">{model_name}</text>'
+        svg_content = svg_content.replace('</svg>', f'{model_svg_tag}</svg>')
 
-      svg_content = ET.tostring(root, encoding='utf-8').decode('utf-8')
     except Exception:
       pass
 
