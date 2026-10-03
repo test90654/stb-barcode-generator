@@ -1,6 +1,5 @@
 streamlit
 pandas
 python-barcode
-Pillow
 reportlab
-openpyxl
+svglib
