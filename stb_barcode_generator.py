@@ -173,12 +173,14 @@ if uploaded_csv is not None:
         ws = wb[sheet_name]
 
         # 原本の配置ルールに基づいてバーコードを埋め込む
-        current_row = 1
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
           # 1個分のバーコード画像を生成
           pil_img = generate_single_label_image(clean_data, model_name_input)
-          temp_img_path = f"temp_gen_{idx}.png"
-          pil_img.save(temp_img_path, format="PNG")
+          
+          # メモリ上にPNGとして保存
+          img_byte_arr = io.BytesIO()
+          pil_img.save(img_byte_arr, format='PNG')
+          img_byte_arr.seek(0)
 
           # 5行ごとにブロックが繰り返される構造に対応
           block_row = ((idx - 1) // 2) * 5 + 1
@@ -187,16 +189,13 @@ if uploaded_csv is not None:
           # セルに機種名を設定
           ws.cell(row=block_row, column=col_idx).value = model_name_input
 
-          # 画像を貼り付け
-          img = OpenpyxlImage(temp_img_path)
+          # メモリ上のデータから直接オープンパイジェクセル用画像オブジェクトを作成
+          img = OpenpyxlImage(img_byte_arr)
           img.width = 220
           img.height = 80
           
           cell_coord = f"{openpyxl.utils.get_column_letter(col_idx)}{block_row + 1}"
           ws.add_image(img, cell_coord)
-
-          if os.path.exists(temp_img_path):
-            os.remove(temp_img_path)
 
         # 保存用バッファ
         output_buffer = io.BytesIO()
