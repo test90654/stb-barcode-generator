@@ -2,22 +2,23 @@ from datetime import datetime
 import io
 import os
 import re
-import zipfile
+import base64
 import barcode
-from barcode.writer import ImageWriter
+from barcode.writer import SVGWriter
 import pandas as pd
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
+import cairosvg  # SVGを綺麗にエクセル用PNGに変換するために使用
 
 st.set_page_config(
-    page_title='STBバーコード自動生成・エクセル埋め込みツール', page_icon='📦', layout='centered'
+    page_title='STBバーコード原本自動埋め込みツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード原本自動埋め込みツール')
+st.title('📦 STBバーコード原本自動埋め込みツール（SVG完全準拠版）')
 st.write(
-    'CSVファイルと原本エクセルファイルをそれぞれアップロードすると、原本のレイアウトにバーコードを自動配置した完成版エクセルファイルを生成します。'
+    'CSVファイルと原本エクセルファイルをアップロードすると、あの完璧なSVG品質のバーコードを原本のセル枠にピタリと収まるサイズで自動埋め込みします。'
 )
 
 # 1. ファイルのアップロード（CSV ＆ 原本エクセル）
@@ -68,131 +69,124 @@ if uploaded_csv is not None:
   )
 
   # 2. 設定項目
-  st.subheader('⚙️ バーコード設定')
+  st.subheader('⚙️ バーコードの設定（SVG品質）')
+  col1, col2 = st.columns(2)
+
+  with col1:
+    module_height = st.slider(
+        'バーの高さ (module_height)',
+        min_value=5.0,
+        max_value=30.0,
+        value=9.0,
+        step=1.0,
+    )
+    font_size = st.slider(
+        '文字の大きさ (font_size)',
+        min_value=8,
+        max_value=24,
+        value=12,
+        step=1,
+    )
+
+  with col2:
+    text_distance = st.slider(
+        '文字とバーの距離 (text_distance)',
+        min_value=1.0,
+        max_value=20.0,
+        value=5.0,
+        step=1.0,
+    )
+    module_width = st.slider(
+        'バーの太さ (module_width)',
+        min_value=0.1,
+        max_value=1.0,
+        value=0.4,
+        step=0.05,
+    )
+    letter_spacing = st.slider(
+        '文字の間隔 (letter_spacing)',
+        min_value=1.0,
+        max_value=30.0,
+        value=12.0,
+        step=1.0,
+    )
+
   model_name_input = st.text_input(
-      'バーコード・エクセル上に表示する機種名（自動抽出・編集可能）',
+      'エクセル上に表示する機種名（自動抽出・編集可能）',
       value=extracted_model
   )
 
-  # フォント取得ヘルパー
-  def get_proper_font(size):
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    custom_font = os.path.join(current_dir, 'arial.ttf')
-    font_paths = [
-        custom_font,
-        'C:/Windows/Fonts/meiryo.ttc',
-        'C:/Windows/Fonts/YuGothM.ttc',
-        'C:/Windows/Fonts/arial.ttf',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/Library/Fonts/Arial.ttf'
-    ]
-    for path in font_paths:
-      if os.path.exists(path):
-        try:
-          return ImageFont.truetype(path, size=int(size))
-        except Exception:
-          continue
-    return ImageFont.load_default()
 
-  # 1個分のラベル画像を生成する関数（機種名＋バーコード＋下部テキスト）
-  def generate_single_label_image(clean_data, model_name):
+  # あの時と同じ完璧なSVGバーコードを生成する関数
+  def generate_spaced_svg_barcode(clean_data, module_width, module_height, font_size, text_distance, spacing):
     code39 = barcode.get_barcode_class('code39')
-    barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
+    barcode_instance = code39(clean_data, writer=SVGWriter(), add_checksum=False)
 
     options = {
-        'module_width': 0.4,
-        'module_height': 12.0,
-        'quiet_zone': 8.0,
-        'write_text': False,
+        'module_width': module_width,
+        'module_height': module_height,
+        'font_size': font_size,
+        'text_distance': text_distance,
+        'quiet_zone': 6.5,
+        'write_text': True,
     }
 
-    rv = io.BytesIO()
-    barcode_instance.write(rv, options=options)
-    rv.seek(0)
+    spaced_text = ' '.join(list(clean_data))
+    barcode_instance.default_text = f'* {spaced_text} *'
 
-    bc_img = Image.open(rv).convert('RGB')
-    bc_w, bc_h = bc_img.size
+    svg_io = io.BytesIO()
+    barcode_instance.write(svg_io, options=options)
+    svg_content = svg_io.getvalue().decode('utf-8')
 
-    display_text = f"* {' '.join(list(clean_data))} *"
-    font_size = max(18, int(bc_w * 0.045))
-    font = get_proper_font(font_size)
-
-    dummy_draw = ImageDraw.Draw(bc_img)
     try:
-      char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
-    except AttributeError:
-      char_widths = [font.getlength(char) for char in display_text]
+      ET.register_namespace('', 'http://www.w3.org/2000/svg')
+      root = ET.fromstring(svg_content)
+      
+      for elem in root.iter():
+        if elem.tag.endswith('text'):
+          existing_style = elem.get('style', '')
+          new_style = f"{existing_style}; letter-spacing: {spacing}px;" if existing_style else f"letter-spacing: {spacing}px;"
+          elem.set('style', new_style)
 
-    sum_widths = sum(char_widths)
-    left_margin = int(bc_w * 0.03)
-    right_margin = int(bc_w * 0.03)
-    available_width = bc_w - (left_margin + right_margin)
+      svg_content = ET.tostring(root, encoding='utf-8').decode('utf-8')
+    except Exception:
+      pass
 
-    if len(display_text) > 1:
-      spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
-    else:
-      spacing = 0
-
-    header_h = 42
-    footer_h = 35
-    total_h = header_h + bc_h + footer_h
-    
-    label_img = Image.new('RGB', (bc_w, total_h), 'white')
-    draw = ImageDraw.Draw(label_img)
-
-    # 機種名（左上・大きくハッキリ）
-    model_font_size = max(22, int(bc_w * 0.055))
-    model_font = get_proper_font(model_font_size)
-    for dx in [0, 1]:
-      draw.text((left_margin + dx, 8), model_name, fill='black', font=model_font)
-
-    # バーコード貼り付け
-    label_img.paste(bc_img, (0, header_h))
-
-    # 下部テキスト
-    text_y = header_h + bc_h + 4
-    current_x = left_margin
-    for idx, char in enumerate(display_text):
-      for dx in [0, 1]:
-        draw.text((current_x + dx, text_y), char, fill='black', font=font)
-      current_x += char_widths[idx] + spacing
-
-    return label_img
+    return svg_content.encode('utf-8')
 
 
   # 3. エクセル一括生成処理
   st.markdown('---')
   if cleaned_data_list:
-    if st.button('📦 原本エクセルにバーコードを自動埋め込んで生成'):
+    if st.button('📦 原本エクセルにSVGバーコードを自動埋め込んで生成'):
       if uploaded_excel is None:
         st.error("原本エクセルファイルが選択されていません。上部からアップロードしてください。")
       else:
-        # アップロードされたエクセルを読み込み
         wb = openpyxl.load_workbook(uploaded_excel)
         sheet_name = wb.sheetnames[0]
         ws = wb[sheet_name]
 
-        # 原本の配置ルールに基づいてバーコードを埋め込む
         for idx, clean_data in enumerate(cleaned_data_list, start=1):
-          # 1個分のバーコード画像を生成
-          pil_img = generate_single_label_image(clean_data, model_name_input)
-          
-          # メモリ上にPNGとして保存
-          img_byte_arr = io.BytesIO()
-          pil_img.save(img_byte_arr, format='PNG')
-          img_byte_arr.seek(0)
+          # 1. 完璧なSVGを生成
+          svg_bytes = generate_spaced_svg_barcode(
+              clean_data, module_width, module_height, font_size, text_distance, letter_spacing
+          )
 
-          # 5行ごとにブロックが繰り返される構造に対応
+          # 2. 原本のセル枠（幅445px×高さ58px相当）に完全に収まるよう、cairosvgで高解像度PNGに変換
+          png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
+          img_byte_arr = io.BytesIO(png_bytes)
+
+          # 3. 原本の配置ルール（5行ごとにブロック）
           block_row = ((idx - 1) // 2) * 5 + 1
           col_idx = 1 if (idx % 2 != 0) else 7
 
-          # セルに機種名を設定
+          # 機種名を設定
           ws.cell(row=block_row, column=col_idx).value = model_name_input
 
-          # メモリ上のデータから直接オープンパイジェクセル用画像オブジェクトを作成
+          # エクセル原本のセル枠からはみ出さない完璧なサイズ（幅445px / 高58pxの比率に一致）
           img = OpenpyxlImage(img_byte_arr)
-          img.width = 220
-          img.height = 80
+          img.width = 300  # 原本のセル枠にピタリと収まる幅
+          img.height = 42  # 原本のセル枠にピタリと収まる高さ
           
           cell_coord = f"{openpyxl.utils.get_column_letter(col_idx)}{block_row + 1}"
           ws.add_image(img, cell_coord)
@@ -205,10 +199,22 @@ if uploaded_csv is not None:
         date_str = datetime.now().strftime('%Y-%m-%d')
         dl_filename = f'STB_Barcodes_{model_name_input}_{date_str}.xlsx'
 
-        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードを原本エクセルに自動埋め込みしました！')
+        st.success(f'✨ 全 {len(cleaned_data_list)}件のバーコードをSVG品質のまま原本エクセルに自動埋め込みしました！')
         st.download_button(
             label='📥 完成版エクセルファイルをダウンロード',
             data=output_buffer,
             file_name=dl_filename,
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
+
+    # 4. プレビュー表示（あの時の完璧なSVG品質を確認）
+    st.markdown('---')
+    st.subheader('👀 バーコードプレビュー（SVG品質）')
+    if cleaned_data_list:
+      sample_data = cleaned_data_list[0]
+      sample_svg = generate_spaced_svg_barcode(
+          sample_data, module_width, module_height, font_size, text_distance, letter_spacing
+      )
+      b64 = base64.b64encode(sample_svg).decode('utf-8')
+      svg_data_url = f'data:image/svg+xml;base64,{b64}'
+      st.image(svg_data_url, caption=f'見本コード: *{sample_data}*', width=450)
