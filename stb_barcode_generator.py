@@ -18,9 +18,9 @@ st.set_page_config(
     page_title='STBバーコード生成・プレビューツール', page_icon='📦', layout='centered'
 )
 
-st.title('📦 STBバーコード生成・プレビューツール（機種名視認性大幅改善版）')
+st.title('📦 STBバーコード生成・プレビューツール（完全自前描画・決定版）')
 st.write(
-    '機種名を大きくハッキリと表示し、A4用紙に6個セット（縦2×横3）で印刷できるPDFを一括生成します。'
+    '機種名も下の数字もハッキリとした見やすいサイズで描画し、A4用紙に6個セット（縦2×横3）で印刷できるPDFを一括生成します。'
 )
 
 # 1. CSVファイルのアップロード
@@ -78,9 +78,9 @@ if uploaded_file is not None:
   with col1:
     module_height = st.slider(
         'バーの高さ (module_height)',
-        min_value=5.0,
+        min_value=10.0,
         max_value=30.0,
-        value=12.0,
+        value=15.0,
         step=1.0,
     )
   with col2:
@@ -114,18 +114,17 @@ if uploaded_file is not None:
     return ImageFont.load_default()
 
 
-  # 1個分のラベル画像を生成する関数（機種名をしっかり大きく視認性高く配置）
+  # 1個分のラベル画像を完全に自前で美しく組み立てる関数
   def generate_single_label_image(clean_data, model_name, module_width, module_height):
     code39 = barcode.get_barcode_class('code39')
+    # write_text=False で文字なしの「バーコードの黒い縦線部分だけ」を生成
     barcode_instance = code39(clean_data, writer=ImageWriter(), add_checksum=False)
 
     options = {
         'module_width': module_width,
         'module_height': module_height,
-        'quiet_zone': 6.5,
-        'write_text': True,  # 下部の数字は既存の美しいレイアウトを維持
-        'font_size': 11,
-        'text_distance': 5.0,
+        'quiet_zone': 8.0,
+        'write_text': False,
     }
 
     rv = io.BytesIO()
@@ -135,26 +134,55 @@ if uploaded_file is not None:
     bc_img = Image.open(rv).convert('RGB')
     bc_w, bc_h = bc_img.size
 
-    # 【改善】機種名用ヘッダー領域を十分に大きく確保（高さ45px）
-    header_h = 45
-    total_h = bc_h + header_h
+    # 下部に表示するテキスト（* 文字 列 *）
+    display_text = f"* {' '.join(list(clean_data))} *"
 
-    label_img = Image.new('RGB', (bc_w, total_h), 'white')
+    # ハッキリと見やすい適切なフォントサイズを計算（例: バーコード幅に対してバランスの良い大きさ）
+    font_size = max(18, int(bc_w * 0.045))
+    font = get_proper_font(font_size)
 
-    # 機種名を大きくハッキリと左上に描画
-    draw = ImageDraw.Draw(label_img)
-    
-    # フォントサイズをバーコード幅に対して十分に大きく設定（例: 幅の約7%、最低26px以上）
-    model_font_size = max(26, int(bc_w * 0.07))
-    font = get_proper_font(model_font_size)
-    
-    # 太字っぽく描画するために数ピクセルずらして重ね描き
+    # 文字幅の計測
+    dummy_draw = ImageDraw.Draw(bc_img)
+    try:
+      char_widths = [dummy_draw.textlength(char, font=font) for char in display_text]
+    except AttributeError:
+      char_widths = [font.getlength(char) for char in display_text]
+
+    sum_widths = sum(char_widths)
     left_margin = int(bc_w * 0.03)
-    for dx in [0, 1]:
-      draw.text((left_margin + dx, 8), model_name, fill='black', font=font)
+    right_margin = int(bc_w * 0.03)
+    available_width = bc_w - (left_margin + right_margin)
 
-    # バーコード本体を下に貼り付け
+    if len(display_text) > 1:
+      spacing = max(2, (available_width - sum_widths) / (len(display_text) - 1))
+    else:
+      spacing = 0
+
+    # 各領域の高さ設定
+    header_h = 42   # 機種名用のスペース
+    footer_h = 35   # 下部テキスト用のスペース
+    
+    total_h = header_h + bc_h + footer_h
+    label_img = Image.new('RGB', (bc_w, total_h), 'white')
+    draw = ImageDraw.Draw(label_img)
+
+    # 1. 機種名（左上・大きくハッキリ）を描画
+    model_font_size = max(22, int(bc_w * 0.055))
+    model_font = get_proper_font(model_font_size)
+    
+    for dx in [0, 1]:  # 疑似ボールド
+      draw.text((left_margin + dx, 8), model_name, fill='black', font=model_font)
+
+    # 2. バーコード画像を中央部に貼り付け
     label_img.paste(bc_img, (0, header_h))
+
+    # 3. 下部テキスト（アスタリスク付きコード・等間隔）を綺麗に描画
+    text_y = header_h + bc_h + 4
+    current_x = left_margin
+    for idx, char in enumerate(display_text):
+      for dx in [0, 1]:  # 疑似ボールド
+        draw.text((current_x + dx, text_y), char, fill='black', font=font)
+      current_x += char_widths[idx] + spacing
 
     return label_img
 
@@ -176,7 +204,7 @@ if uploaded_file is not None:
       row_gap = 15 * mm
 
       cell_w = 55 * mm
-      cell_h = 32 * mm
+      cell_h = 34 * mm
 
       items_per_page = cols * rows
       count = 0
