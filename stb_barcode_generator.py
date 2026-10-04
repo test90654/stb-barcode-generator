@@ -36,6 +36,14 @@ def register_fonts():
     pass
   return fonts
 
+@st.cache_data(max_entries=4)
+def render_pdf_pages(pdf_bytes, dpi):
+  """PDFの各ページをPNG画像に変換する（プレビュー用）"""
+  pdf_doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+  pages = [page.get_pixmap(dpi=dpi).tobytes('png') for page in pdf_doc]
+  pdf_doc.close()
+  return pages
+
 st.set_page_config(
     page_title='STBバーコード印刷用PDF自動生成ツール', page_icon='📦', layout='centered'
 )
@@ -313,11 +321,26 @@ if uploaded_csv is not None:
       st.success('✨ 印刷用PDFの準備ができました！以下のプレビューをご確認ください。')
       
       # ChromeはiframeでのdataURI PDF表示をブロックするため、各ページを画像化して表示する
-      pdf_doc = pymupdf.open(stream=st.session_state['pdf_buffer'], filetype='pdf')
-      for page_no, page in enumerate(pdf_doc, start=1):
-        png_bytes = page.get_pixmap(dpi=120).tobytes('png')
-        st.image(png_bytes, caption=f'{page_no} / {pdf_doc.page_count} ページ', use_container_width=True)
-      pdf_doc.close()
+      # 細いバーは低解像度だと潰れて見えるため、表示倍率に合わせた解像度で描画し、横スクロールで拡大表示する
+      st.caption('※ 画面表示では細いバーが潰れて見えることがありますが、印刷・ダウンロードしたPDFには影響しません。倍率を上げると確認しやすくなります。')
+      zoom = st.select_slider(
+          'プレビューの表示倍率',
+          options=[100, 150, 200, 300],
+          value=200,
+          format_func=lambda z: f'{z}%',
+      )
+      display_w = int(700 * zoom / 100)
+      # 高解像度ディスプレイでもくっきり見えるよう、表示幅の2倍の解像度で描画する
+      dpi = int(display_w * 2 / (A4[0] / 72))
+      page_images = render_pdf_pages(st.session_state['pdf_buffer'], dpi)
+      for page_no, png_bytes in enumerate(page_images, start=1):
+        b64_png = base64.b64encode(png_bytes).decode('utf-8')
+        st.markdown(
+            f'<div style="overflow-x:auto;border:1px solid #ddd;">'
+            f'<img src="data:image/png;base64,{b64_png}" style="width:{display_w}px;max-width:none;"></div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f'{page_no} / {len(page_images)} ページ')
 
       date_str = datetime.now().strftime('%Y-%m-%d')
       dl_filename = f'STB_Barcodes_{st.session_state["model_name"]}_{date_str}.pdf'
