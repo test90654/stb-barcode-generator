@@ -2,4 +2,3 @@ streamlit
 pandas
 python-barcode
 reportlab
-svglib
