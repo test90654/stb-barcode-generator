@@ -278,6 +278,15 @@ if uploaded_csv is not None:
         c.showPage()
 
       block_top = page_height - margin_top - pos_in_page * BLOCK_H
+
+      # 6個の塊ごとの切り取り線（グレーの破線）
+      c.saveState()
+      c.setStrokeColorRGB(0.6, 0.6, 0.6)
+      c.setLineWidth(0.5)
+      c.setDash(4, 3)
+      c.rect(margin_x, block_top - BLOCK_H, BLOCK_W, BLOCK_H, stroke=1, fill=0)
+      c.restoreState()
+
       for r in range(BLOCK_ROWS):
         for col in range(BLOCK_COLS):
           cell_x = margin_x + col * cell_w
