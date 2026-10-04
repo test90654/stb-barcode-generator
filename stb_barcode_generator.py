@@ -176,7 +176,8 @@ if uploaded_csv is not None:
   # PDF生成ロジックの共通関数
   # svglibはSVGのフォント・letter-spacingを再現できないため、バーと文字をReportLabで直接描画する
   def draw_barcode_cell(c, clean_data, model_name, cell_x, cell_y, cell_w, cell_h, fonts):
-    padding = 12
+    padding = 3 * mm
+    padding_y = 1.5 * mm
     max_w = cell_w - padding * 2
 
     # バーコードのモジュール列（スタート/ストップの「*」を含む）
@@ -192,18 +193,38 @@ if uploaded_csv is not None:
     total_w *= scale
     bar_h = module_height * mm
 
+    name_size = 14
+    name_gap = 8
+    gap = text_distance * mm * 0.5
+    code_size = font_size
+
+    # セルの高さに収まらない場合は、機種名・バーの高さ・文字を同じ比率で縮める
+    natural_h = name_size + name_gap + bar_h + gap + code_size
+    v_scale = min(1.0, (cell_h - padding_y * 2) / natural_h)
+    name_size *= v_scale
+    name_gap *= v_scale
+    bar_h *= v_scale
+    gap *= v_scale
+    code_size *= v_scale
+
+    # 機種名がセル幅に収まらない場合は文字を小さくする
+    name_w = pdfmetrics.stringWidth(model_name, fonts['model'], name_size)
+    if name_w > max_w:
+      name_size *= max_w / name_w
+      name_w = max_w
+
     # 下の文字（「*データ*」を文字間隔付きで）
     text = f'*{clean_data}*'
-    char_space = letter_spacing * 0.75  # px → pt
-    glyph_w = pdfmetrics.stringWidth(text, fonts['code'], font_size)
+    char_space = letter_spacing * 0.75 * v_scale  # px → pt
+    glyph_w = pdfmetrics.stringWidth(text, fonts['code'], code_size)
+    if glyph_w > max_w:
+      code_size *= max_w / glyph_w
+      glyph_w = max_w
     if len(text) > 1 and glyph_w + char_space * (len(text) - 1) > max_w:
       char_space = max(0.0, (max_w - glyph_w) / (len(text) - 1))
     text_w = glyph_w + char_space * (len(text) - 1)
 
-    name_size = 14
-    name_gap = 8
-    gap = text_distance * mm * 0.5
-    block_h = name_size + name_gap + bar_h + gap + font_size
+    block_h = name_size + name_gap + bar_h + gap + code_size
 
     # セル内で上下左右中央に配置
     center_x = cell_x + cell_w / 2
@@ -214,7 +235,6 @@ if uploaded_csv is not None:
     x = center_x - total_w / 2 + quiet
 
     # 機種名（バーコードの左上にそろえる。短いバーコードでセルからはみ出す場合のみ左へずらす）
-    name_w = pdfmetrics.stringWidth(model_name, fonts['model'], name_size)
     name_x = max(cell_x + padding, min(x, cell_x + cell_w - padding - name_w))
     c.setFont(fonts['model'], name_size)
     c.drawString(name_x, top - name_size, model_name)
@@ -229,9 +249,15 @@ if uploaded_csv is not None:
         run_start = None
 
     # 文字
-    c.setFont(fonts['code'], font_size)
-    c.drawString(center_x - text_w / 2, bars_top - bar_h - gap - font_size * 0.8,
+    c.setFont(fonts['code'], code_size)
+    c.drawString(center_x - text_w / 2, bars_top - bar_h - gap - code_size * 0.8,
                  text, charSpace=char_space)
+
+  # 同一バーコードを横2×縦3の計6個並べた塊（余白込みで横15cm×縦6cm）を、A4に縦に積んで配置する
+  BLOCK_W = 150 * mm
+  BLOCK_H = 60 * mm
+  BLOCK_COLS = 2
+  BLOCK_ROWS = 3
 
   def create_barcode_pdf(data_list, model_name):
     fonts = register_fonts()
@@ -239,25 +265,24 @@ if uploaded_csv is not None:
     c = canvas.Canvas(pdf_buffer, pagesize=A4)
     page_width, page_height = A4
 
-    cols = 2
-    rows = 3
-    margin_x = 40
-    margin_top = 50
-    cell_w = (page_width - (margin_x * 2)) / cols
-    cell_h = (page_height - (margin_top * 2)) / rows
+    blocks_per_page = int(page_height // BLOCK_H)
+    cell_w = BLOCK_W / BLOCK_COLS
+    cell_h = BLOCK_H / BLOCK_ROWS
+    margin_x = (page_width - BLOCK_W) / 2
+    margin_top = (page_height - BLOCK_H * blocks_per_page) / 2
 
     for idx, clean_data in enumerate(data_list):
-      pos_in_page = idx % 6
+      pos_in_page = idx % blocks_per_page
 
       if idx > 0 and pos_in_page == 0:
         c.showPage()
 
-      r = pos_in_page // cols
-      col = pos_in_page % cols
-
-      cell_x = margin_x + col * cell_w
-      cell_y = page_height - margin_top - (r + 1) * cell_h
-      draw_barcode_cell(c, clean_data, model_name, cell_x, cell_y, cell_w, cell_h, fonts)
+      block_top = page_height - margin_top - pos_in_page * BLOCK_H
+      for r in range(BLOCK_ROWS):
+        for col in range(BLOCK_COLS):
+          cell_x = margin_x + col * cell_w
+          cell_y = block_top - (r + 1) * cell_h
+          draw_barcode_cell(c, clean_data, model_name, cell_x, cell_y, cell_w, cell_h, fonts)
 
     c.save()
     pdf_buffer.seek(0)
