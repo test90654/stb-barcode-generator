@@ -6,6 +6,7 @@ import base64
 import barcode
 from barcode.writer import SVGWriter
 import pandas as pd
+import pymupdf
 import streamlit as st
 import xml.etree.ElementTree as ET
 from reportlab.lib.pagesizes import A4
@@ -275,10 +276,12 @@ if uploaded_csv is not None:
     if 'pdf_buffer' in st.session_state:
       st.success('✨ 印刷用PDFの準備ができました！以下のプレビューをご確認ください。')
       
-      # PDFを画面上に埋め込み表示するためのデータURI作成
-      base64_pdf = base64.b64encode(st.session_state['pdf_buffer']).decode('utf-8')
-      pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="1000" height="700" type="application/pdf"></iframe>'
-      st.markdown(pdf_display, unsafe_allow_html=True)
+      # ChromeはiframeでのdataURI PDF表示をブロックするため、各ページを画像化して表示する
+      pdf_doc = pymupdf.open(stream=st.session_state['pdf_buffer'], filetype='pdf')
+      for page_no, page in enumerate(pdf_doc, start=1):
+        png_bytes = page.get_pixmap(dpi=120).tobytes('png')
+        st.image(png_bytes, caption=f'{page_no} / {pdf_doc.page_count} ページ', use_container_width=True)
+      pdf_doc.close()
 
       date_str = datetime.now().strftime('%Y-%m-%d')
       dl_filename = f'STB_Barcodes_{st.session_state["model_name"]}_{date_str}.pdf'
