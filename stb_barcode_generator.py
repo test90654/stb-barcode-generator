@@ -20,8 +20,8 @@ FONT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 @st.cache_resource
 def register_fonts():
-  """リポジトリ同梱のフォントをPDF用に登録（バーコード文字: Arial / 機種名: メイリオ）"""
-  fonts = {'code': 'Helvetica', 'model': 'Helvetica-Bold'}
+  """リポジトリ同梱のフォントをPDF用に登録（バーコード文字: Arial / 機種名: メイリオ標準）"""
+  fonts = {'code': 'Helvetica', 'model': 'Helvetica'}
   try:
     pdfmetrics.registerFont(TTFont('Arial', os.path.join(FONT_DIR, 'ARIAL.TTF')))
     fonts['code'] = 'Arial'
@@ -29,9 +29,9 @@ def register_fonts():
     pass
   try:
     pdfmetrics.registerFont(
-        TTFont('Meiryo-Bold', os.path.join(FONT_DIR, 'MEIRYOB.TTC'), subfontIndex=0)
+        TTFont('Meiryo', os.path.join(FONT_DIR, 'MEIRYO.TTC'), subfontIndex=0)
     )
-    fonts['model'] = 'Meiryo-Bold'
+    fonts['model'] = 'Meiryo'
   except Exception:
     pass
   return fonts
@@ -209,13 +209,15 @@ if uploaded_csv is not None:
     center_x = cell_x + cell_w / 2
     top = cell_y + (cell_h + block_h) / 2
 
-    # 機種名
-    c.setFont(fonts['model'], name_size)
-    c.drawCentredString(center_x, top - name_size, model_name)
-
     # バー
     bars_top = top - name_size - name_gap
     x = center_x - total_w / 2 + quiet
+
+    # 機種名（バーコードの左上にそろえる。短いバーコードでセルからはみ出す場合のみ左へずらす）
+    name_w = pdfmetrics.stringWidth(model_name, fonts['model'], name_size)
+    name_x = max(cell_x + padding, min(x, cell_x + cell_w - padding - name_w))
+    c.setFont(fonts['model'], name_size)
+    c.drawString(name_x, top - name_size, model_name)
     c.setFillColorRGB(0, 0, 0)
     run_start = None
     for i, m in enumerate(modules + '0'):
